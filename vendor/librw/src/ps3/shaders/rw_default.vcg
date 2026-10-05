@@ -1,0 +1,18 @@
+// rw_default.vcg -- librw's default pipeline (gl3 default.vert)
+#include "common.cgh"
+
+void main(float4 in_pos    : ATTR0,
+          float3 in_normal : ATTR2,
+          float4 in_color  : ATTR3,
+          float2 in_tex0   : ATTR8,
+          out float4 o_pos   : POSITION,
+          out float4 o_color : COLOR0,
+          out float2 o_tex0  : TEXCOORD0,
+          out float4 o_fog   : TEXCOORD2)
+{
+	float4 p = float4(in_pos.xyz, 1.0);
+	o_pos = Transform(p);
+	o_color = DoColor(in_color, in_normal);
+	o_tex0 = in_tex0;
+	o_fog = DoFog(o_pos.w);
+}

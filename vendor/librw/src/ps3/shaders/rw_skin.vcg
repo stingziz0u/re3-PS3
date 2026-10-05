@@ -1,0 +1,39 @@
+// rw_skin.vcg -- skinned geometry (gl3 skin.vert), 74 bones as 3 rows each
+// (c32..c253: vp40 addresses constants up to c255)
+#include "common.cgh"
+
+uniform float4 u_bones[222] : C32;
+
+#define SKINBONE(c) { \
+	int b = (int)idx.c; \
+	float3 q = float3(dot(u_bones[b], p), dot(u_bones[b+1], p), dot(u_bones[b+2], p)); \
+	float3 m = float3(dot(u_bones[b], n), dot(u_bones[b+1], n), dot(u_bones[b+2], n)); \
+	sp += q * in_weights.c; \
+	sn += m * in_weights.c; }
+
+void main(float4 in_pos     : ATTR0,
+          float4 in_weights : ATTR1,
+          float3 in_normal  : ATTR2,
+          float4 in_color   : ATTR3,
+          float4 in_indices : ATTR7,
+          float2 in_tex0    : ATTR8,
+          out float4 o_pos   : POSITION,
+          out float4 o_color : COLOR0,
+          out float2 o_tex0  : TEXCOORD0,
+          out float4 o_fog   : TEXCOORD2)
+{
+	float4 p = float4(in_pos.xyz, 1.0);
+	float4 n = float4(in_normal, 0.0);
+	float3 sp = float3(0.0, 0.0, 0.0);
+	float3 sn = float3(0.0, 0.0, 0.0);
+	// indices come as normalized bytes
+	float4 idx = floor(in_indices * 255.0 + 0.5) * 3.0;
+	SKINBONE(x)
+	SKINBONE(y)
+	SKINBONE(z)
+	SKINBONE(w)
+	o_pos = Transform(float4(sp, 1.0));
+	o_color = DoColor(in_color, sn);
+	o_tex0 = in_tex0;
+	o_fog = DoFog(o_pos.w);
+}

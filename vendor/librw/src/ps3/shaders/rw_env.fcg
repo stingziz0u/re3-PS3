@@ -1,0 +1,18 @@
+// rw_env.fcg -- MatFX environment map (gl3 matfx_env.frag), drawn with
+// SRCBLEND ONE: pass 1 premultiplied by its alpha, the env added on top.
+void main(float4 color  : COLOR0,
+          float4 color1 : COLOR1,
+          float2 tex0   : TEXCOORD0,
+          float2 tex1   : TEXCOORD1,
+          float4 fog    : TEXCOORD2,
+          uniform sampler2D base : TEXUNIT0,
+          uniform sampler2D env  : TEXUNIT1,
+          out float4 o_color : COLOR)
+{
+	float4 pass1 = color * tex2D(base, tex0);
+	float3 pass2 = color1.rgb * tex2D(env, tex1).rgb;
+	pass1.rgb = lerp(fog.rgb, pass1.rgb, fog.a);
+	pass2 *= fog.a;
+	float fba = max(pass1.a, color1.a);
+	o_color = float4(pass1.rgb * pass1.a + pass2 * fba, pass1.a);
+}

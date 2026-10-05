@@ -1,0 +1,14 @@
+// rw_addalpha.fcg -- rw_add for SRCBLEND SRCALPHA, DESTBLEND ONE (what is
+// added is rgb * a): killed when that is (almost) nothing.
+void main(float4 color : COLOR0,
+          float2 tex0  : TEXCOORD0,
+          float4 fog   : TEXCOORD2,
+          uniform sampler2D tex : TEXUNIT0,
+          out float4 o_color : COLOR)
+{
+	float4 c = color * tex2D(tex, tex0);
+	c.rgb = lerp(fog.rgb, c.rgb, fog.a);
+	if (max(max(c.r, c.g), c.b) * c.a < 1.0/512.0)
+		discard;
+	o_color = c;
+}

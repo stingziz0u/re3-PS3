@@ -1,0 +1,25 @@
+// rw_env.vcg -- MatFX environment map (gl3 matfx_env.vert)
+#include "common.cgh"
+
+void main(float4 in_pos    : ATTR0,
+          float3 in_normal : ATTR2,
+          float4 in_color  : ATTR3,
+          float2 in_tex0   : ATTR8,
+          out float4 o_pos    : POSITION,
+          out float4 o_color  : COLOR0,
+          out float4 o_color1 : COLOR1,
+          out float2 o_tex0   : TEXCOORD0,
+          out float2 o_tex1   : TEXCOORD1,
+          out float4 o_fog    : TEXCOORD2)
+{
+	float4 p = float4(in_pos.xyz, 1.0);
+	o_pos = Transform(p);
+	float4 c = DoColor(in_color, in_normal);
+	o_color = c;
+	// env color: max(color, clamp) * shininess; alpha carries disableFBA
+	o_color1 = float4(max(c.rgb, u_colorClamp.rgb) * u_fxParams.x, u_fxParams.y);
+	o_tex0 = in_tex0;
+	float4 n = float4(in_normal, 1.0);
+	o_tex1 = float2(dot(u_envRow[0], n), dot(u_envRow[1], n));
+	o_fog = DoFog(o_pos.w);
+}

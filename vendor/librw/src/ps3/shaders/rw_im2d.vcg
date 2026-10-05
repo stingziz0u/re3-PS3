@@ -1,0 +1,19 @@
+// rw_im2d.vcg -- Im2D (gl3 im2d.vert): pixel coordinates, w = camera z
+#include "common.cgh"
+
+void main(float4 in_pos   : ATTR0,
+          float4 in_color : ATTR3,
+          float2 in_tex0  : ATTR8,
+          out float4 o_pos   : POSITION,
+          out float4 o_color : COLOR0,
+          out float2 o_tex0  : TEXCOORD0,
+          out float4 o_fog   : TEXCOORD2)
+{
+	float4 p = in_pos;
+	p.xy = p.xy * u_xform.xy + u_xform.zw;
+	o_fog = DoFog(p.w);
+	p.xyz *= p.w;
+	o_pos = p;
+	o_color = in_color;
+	o_tex0 = in_tex0;
+}
