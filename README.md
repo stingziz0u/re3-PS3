@@ -140,3 +140,9 @@ The original re3 README is kept as [README.re3.md](README.re3.md).
 See [LICENSE](LICENSE). Grand Theft Auto III is © Rockstar Games /
 Take-Two Interactive. This project is not affiliated with or endorsed by
 Rockstar Games, Take-Two Interactive or Sony Interactive Entertainment.
+
+## AI disclosure
+
+This project's code was written collaboratively with Claude (Anthropic),
+working through this port with me in real time over many sessions. Every
+bit of testing and debugging was done by me on real hardware.
