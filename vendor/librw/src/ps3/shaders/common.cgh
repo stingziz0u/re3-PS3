@@ -1,0 +1,49 @@
+// common.cgh -- constant registers shared by all the RSX vertex programs.
+// The layout is fixed (bound by hand) so ps3device.cpp can upload
+// constants by register, whatever program is loaded.
+
+uniform float4   u_mvp[4]       : C0;	// rows of proj*view*world
+uniform float4   u_matColor     : C4;
+uniform float4   u_surfProps    : C5;	// ambient, specular, diffuse, extra
+uniform float4   u_ambLight     : C6;
+uniform float4   u_fogData      : C7;	// fogEnd, 1/(fogStart-fogEnd), fogDisable, 0
+uniform float4   u_fogColor     : C8;
+uniform float4   u_xform        : C9;	// Im2D: pixels -> clip space
+uniform float4   u_envRow[2]    : C10;	// MatFX env: model normal -> env uv
+uniform float4   u_fxParams     : C12;	// shininess, disableFBA
+uniform float4   u_colorClamp   : C13;
+uniform float4   u_lights[16]   : C16;	// 8 x (minus direction in model space, color)
+
+float4 Transform(float4 p)
+{
+	return float4(dot(u_mvp[0], p), dot(u_mvp[1], p), dot(u_mvp[2], p), dot(u_mvp[3], p));
+}
+
+float3 DoLights(float3 n)
+{
+	// unrolled (no branches in the vertex program); unused lights have
+	// color 0
+	float3 c = max(dot(n, u_lights[0].xyz), 0.0) * u_lights[1].rgb;
+	c += max(dot(n, u_lights[2].xyz), 0.0) * u_lights[3].rgb;
+	c += max(dot(n, u_lights[4].xyz), 0.0) * u_lights[5].rgb;
+	c += max(dot(n, u_lights[6].xyz), 0.0) * u_lights[7].rgb;
+	c += max(dot(n, u_lights[8].xyz), 0.0) * u_lights[9].rgb;
+	c += max(dot(n, u_lights[10].xyz), 0.0) * u_lights[11].rgb;
+	c += max(dot(n, u_lights[12].xyz), 0.0) * u_lights[13].rgb;
+	c += max(dot(n, u_lights[14].xyz), 0.0) * u_lights[15].rgb;
+	return c;
+}
+
+float4 DoColor(float4 prelit, float3 n)
+{
+	float4 c = prelit;
+	c.rgb += u_ambLight.rgb * u_surfProps.x;
+	c.rgb += DoLights(n) * u_surfProps.z;
+	return saturate(c) * u_matColor;
+}
+
+float4 DoFog(float w)
+{
+	float f = clamp((w - u_fogData.x) * u_fogData.y, u_fogData.z, 1.0);
+	return float4(u_fogColor.rgb, f);
+}

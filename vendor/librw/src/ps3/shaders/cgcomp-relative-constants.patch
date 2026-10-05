@@ -1,0 +1,36 @@
+--- a/tools/cgcomp/source/vpparser.cpp
++++ b/tools/cgcomp/source/vpparser.cpp
+@@ -414,7 +414,9 @@
+ 
+ 		while(isdigit(*p)) p++;
+ 	} else if(strncmp(p,"A0",2)==0 || strncmp(p,"A1",2)==0) {
+-		reg->reg.type = NVFXSR_IMM;
++		// relative constant c[An.c + k]: a constant source with INDEX_CONST
++		// (was NVFXSR_IMM, which emit_src drops: the read wasn't indexed)
++		reg->reg.type = NVFXSR_CONST;
+ 		reg->reg.index = 0;
+ 
+ 		reg->indirect = TRUE;
+@@ -427,7 +429,9 @@
+ 			p++;
+ 
+ 			reg->indirect_swz = 0;
+-			for(k=0;p[k] && k<4;k++) {
++			// only the swizzle letters (the old loop ate " + 3" of
++			// "A0.w + 32" and lost the offset)
++			for(k=0;k<4 && (p[k]=='x' || p[k]=='y' || p[k]=='z' || p[k]=='w');k++) {
+ 				if(p[k]=='x')
+ 					reg->indirect_swz |= NVFX_SWZ_X;
+ 				else if(p[k]=='y')
+@@ -448,9 +452,9 @@
+ 			if(isdigit(*p)) {
+ 				const s32 k = atoi(p);
+ 				if(sign=='-') {
+-					if(k<64) reg->reg.index = -k;
++					if(k<468) reg->reg.index = -k;
+ 				} else {
+-					if(k<63) reg->reg.index = k;
++					if(k<468) reg->reg.index = k;
+ 				}
+ 				while(isdigit(*p)) p++;
+ 			}

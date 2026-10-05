@@ -1,0 +1,16 @@
+// rw_im3d.vcg -- Im3D (gl3 im3d.vert)
+#include "common.cgh"
+
+void main(float4 in_pos   : ATTR0,
+          float4 in_color : ATTR3,
+          float2 in_tex0  : ATTR8,
+          out float4 o_pos   : POSITION,
+          out float4 o_color : COLOR0,
+          out float2 o_tex0  : TEXCOORD0,
+          out float4 o_fog   : TEXCOORD2)
+{
+	o_pos = Transform(float4(in_pos.xyz, 1.0));
+	o_color = in_color;
+	o_tex0 = in_tex0;
+	o_fog = DoFog(o_pos.w);
+}
