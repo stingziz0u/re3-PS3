@@ -55,7 +55,7 @@ PlayStation button icons and the controller picture of the settings page).
    | `mp3`   | optional: your own music                   |
    | `skins` | optional: player skins (`.bmp`)            |
 
-   Folder and file names may be in any letter case, as on the PC.
+   Filenames are case-sensitive on the PS3: keep them lowercase, exactly as above.
 3. Start **re3** from the XMB.
 
 ## Mods
