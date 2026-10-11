@@ -9,6 +9,18 @@
 
 #include "ps3_platform.h"
 
+// microseconds from the timebase (sysGetSystemTime is a system call)
+static u64
+profNow(void)
+{
+	static u64 freq;
+	if (freq == 0)
+		freq = sysGetTimebaseFrequency();
+	u64 tb;
+	__asm__ volatile("mftb %0" : "=r"(tb));
+	return tb * 1000000 / freq;
+}
+
 // the timers are also crash breadcrumbs (1 = started, 2 = done): main.cpp's
 // frame phases after CGame::Process (audio, render list, scene, 2D, present)
 // had none. The names are string literals, as PS3_Crumb needs.
@@ -61,7 +73,7 @@ PS3_ProfStart(const char *name)
 	PS3_Crumb(name, 1);
 	ProfTimer *t = FindTimer(name);
 	if (t) {
-		t->start = sysGetSystemTime();
+		t->start = profNow();
 		GPU_MARK(2 * (int)(t - timers));
 	}
 }
@@ -74,7 +86,7 @@ PS3_ProfEnd(const char *name)
 	if (t)
 		GPU_MARK(2 * (int)(t - timers) + 1);
 	if (t && t->start) {
-		t->total += sysGetSystemTime() - t->start;
+		t->total += profNow() - t->start;
 		t->start = 0;
 	}
 }
@@ -83,7 +95,7 @@ PS3_ProfEnd(const char *name)
 void
 PS3_ProfFrame(void)
 {
-	u64 now = sysGetSystemTime();
+	u64 now = profNow();
 	PS3_crumbFrame++;	// the frame number in the [crash] lines
 	if (frameStart)
 		frameTotal += now - frameStart;

@@ -43,10 +43,17 @@ int32 texAniso = 1;
 RasterStats rasterStats;
 TexProfile texProfile;
 
+// microseconds from the PPU's timebase: sysGetSystemTime is a system call
+// (microseconds each), and the texture code times every level it writes
 uint64
 texProfNow(void)
 {
-	return sysGetSystemTime();
+	static uint64 freq;
+	if(freq == 0)
+		freq = sysGetTimebaseFrequency();
+	uint64 tb;
+	__asm__ volatile("mftb %0" : "=r"(tb));
+	return tb * 1000000 / freq;
 }
 
 // Hashes of "name|mask" (lower case) looked for as image files and not
@@ -551,72 +558,183 @@ swizzleStore(T *dst, int32 w, int32 h, const uint32 *tx, const uint32 *ty, Get g
 	}
 }
 
-// DXT blocks into RGBA8 bytes (w and h multiples of 4), the same texels as
-// librw's Image::setPixelsDXT (its rules: DXT3 always four colours, DXT1
-// and DXT5 three and transparent when col0 <= col1) at a fraction of the
-// cost: tables for the 5/6 bit expansion, the thirds as a multiply.
+// DXT decoding. The same texels as librw's Image::setPixelsDXT (its rules:
+// DXT3 always four colours, DXT1 and DXT5 three and transparent when
+// col0 <= col1) at a fraction of the cost: tables for the 5/6 bit
+// expansion, the thirds as a multiply, and no load of something stored a
+// moment ago (the PPU stalls ~40 cycles on that, load-hit-store): a
+// block's colours stay in registers, two 64-bit words (c0 c1 / c2 c3) a
+// 2-bit index picks from without a branch.
 static uint8 expand5[32], expand6[64];
 
 static inline uint32 le16(const uint8 *p) { return p[0] | p[1]<<8; }
 static inline uint32 le32(const uint8 *p) { return p[0] | p[1]<<8 | p[2]<<16 | (uint32)p[3]<<24; }
 static inline uint32 third(uint32 x) { return (x * 0xAAABu) >> 17; }	// x/3, x < 65536
 
-static void
-decodeDXT(int32 dxt, uint8 *dst, int32 w, int32 h, const uint8 *src)
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define PACK_RGBA(r,g,b,a) ((uint32)(a)<<24 | (uint32)(b)<<16 | (uint32)(g)<<8 | (uint32)(r))
+#define RGBA_R(v) ((v) & 0xFF)
+#define RGBA_G(v) (((v) >> 8) & 0xFF)
+#define RGBA_B(v) (((v) >> 16) & 0xFF)
+#define RGBA_A(v) ((v) >> 24)
+#define RGBA_SETA(v, a) (((v) & 0x00FFFFFFu) | (uint32)(a)<<24)
+#else
+#define PACK_RGBA(r,g,b,a) ((uint32)(r)<<24 | (uint32)(g)<<16 | (uint32)(b)<<8 | (uint32)(a))
+#define RGBA_R(v) ((v) >> 24)
+#define RGBA_G(v) (((v) >> 16) & 0xFF)
+#define RGBA_B(v) (((v) >> 8) & 0xFF)
+#define RGBA_A(v) ((v) & 0xFF)
+#define RGBA_SETA(v, a) (((v) & 0xFFFFFF00u) | (uint32)(a))
+#endif
+
+static inline void
+dxtExpandInit(void)
 {
 	if(expand5[31] == 0){
 		for(int32 i = 0; i < 32; i++) expand5[i] = i*0xFF/0x1F;
 		for(int32 i = 0; i < 64; i++) expand6[i] = i*0xFF/0x3F;
 	}
+}
+
+// the four colours of a block's colour part, as RGBA words
+static inline void
+dxtColors(int32 dxt, const uint8 *cb, uint64 *lo, uint64 *hi)
+{
+	uint32 col0 = le16(cb), col1 = le16(cb+2);
+	uint32 r0 = expand5[(col0>>11) & 0x1F], g0 = expand6[(col0>>5) & 0x3F], b0 = expand5[col0 & 0x1F];
+	uint32 r1 = expand5[(col1>>11) & 0x1F], g1 = expand6[(col1>>5) & 0x3F], b1 = expand5[col1 & 0x1F];
+	uint32 c2, c3;
+	if(dxt == 3 || col0 > col1){
+		c2 = PACK_RGBA(third(2*r0 + r1), third(2*g0 + g1), third(2*b0 + b1), 0xFF);
+		c3 = PACK_RGBA(third(r0 + 2*r1), third(g0 + 2*g1), third(b0 + 2*b1), 0xFF);
+	}else{
+		c2 = PACK_RGBA((r0 + r1)/2, (g0 + g1)/2, (b0 + b1)/2, 0xFF);
+		c3 = 0;
+	}
+	*lo = (uint64)PACK_RGBA(r0, g0, b0, 0xFF) << 32 | PACK_RGBA(r1, g1, b1, 0xFF);
+	*hi = (uint64)c2 << 32 | c3;
+}
+
+static inline uint32
+dxtPick(uint64 lo, uint64 hi, uint32 i)
+{
+	uint64 m = (uint64)0 - (uint64)((i >> 1) & 1);
+	uint64 w = (lo & ~m) | (hi & m);
+	return (uint32)(w >> ((~i & 1) << 5));
+}
+
+// DXT3/5: the alphas of the block's 16 texels, 8 bits each (texels 0-7 in
+// a0, 8-15 in a1, texel k at (k & 7)*8)
+static inline void
+dxtAlphas(int32 dxt, const uint8 *src, uint64 *a0, uint64 *a1)
+{
+	uint64 r0 = 0, r1 = 0;
+	if(dxt == 3){
+		for(int32 k = 0; k < 8; k++){
+			r0 |= (uint64)(((src[k>>1] >> ((k & 1)*4)) & 0xF)*17) << (k*8);
+			r1 |= (uint64)(((src[4 + (k>>1)] >> ((k & 1)*4)) & 0xF)*17) << (k*8);
+		}
+	}else{
+		uint32 p0 = src[0], p1 = src[1];
+		uint64 pal = (uint64)p0 | (uint64)p1 << 8;
+		if(p0 > p1){
+			for(uint32 i = 1; i < 7; i++)
+				pal |= (uint64)(((7-i)*p0 + i*p1) / 7) << ((i+1)*8);
+		}else{
+			for(uint32 i = 1; i < 5; i++)
+				pal |= (uint64)(((5-i)*p0 + i*p1) / 5) << ((i+1)*8);
+			pal |= (uint64)0xFF << 56;
+		}
+		uint64 bits = (uint64)le32(src+2) | (uint64)le16(src+6) << 32;
+		for(int32 k = 0; k < 8; k++, bits >>= 3)
+			r0 |= ((pal >> ((bits & 7)*8)) & 0xFF) << (k*8);
+		for(int32 k = 0; k < 8; k++, bits >>= 3)
+			r1 |= ((pal >> ((bits & 7)*8)) & 0xFF) << (k*8);
+	}
+	*a0 = r0;
+	*a1 = r1;
+}
+
+// DXT blocks into RGBA8 bytes, row by row (w and h multiples of 4)
+static void
+decodeDXT(int32 dxt, uint8 *dst, int32 w, int32 h, const uint8 *src)
+{
+	dxtExpandInit();
+	uint32 *d32 = (uint32*)dst;
 	int32 bsize = dxt == 1 ? 8 : 16;
 	for(int32 by = 0; by < h; by += 4)
 		for(int32 bx = 0; bx < w; bx += 4, src += bsize){
 			const uint8 *cb = dxt == 1 ? src : src + 8;
-			uint32 col0 = le16(cb), col1 = le16(cb+2);
-			uint8 c[4][4];
-			c[0][0] = expand5[(col0>>11) & 0x1F]; c[0][1] = expand6[(col0>>5) & 0x3F]; c[0][2] = expand5[col0 & 0x1F]; c[0][3] = 0xFF;
-			c[1][0] = expand5[(col1>>11) & 0x1F]; c[1][1] = expand6[(col1>>5) & 0x3F]; c[1][2] = expand5[col1 & 0x1F]; c[1][3] = 0xFF;
-			if(dxt == 3 || col0 > col1){
-				for(int32 k = 0; k < 3; k++){
-					c[2][k] = third(2*c[0][k] + c[1][k]);
-					c[3][k] = third(c[0][k] + 2*c[1][k]);
-				}
-				c[2][3] = c[3][3] = 0xFF;
-			}else{
-				for(int32 k = 0; k < 3; k++)
-					c[2][k] = (c[0][k] + c[1][k]) / 2;
-				c[2][3] = 0xFF;
-				c[3][0] = c[3][1] = c[3][2] = c[3][3] = 0;
-			}
-			uint8 a[16];
-			if(dxt == 3){
-				for(int32 k = 0; k < 8; k++){
-					a[2*k] = (src[k] & 0xF)*17;
-					a[2*k+1] = (src[k] >> 4)*17;
-				}
-			}else if(dxt == 5){
-				uint32 ap[8];
-				ap[0] = src[0];
-				ap[1] = src[1];
-				if(ap[0] > ap[1]){
-					for(int32 i = 1; i < 7; i++)
-						ap[i+1] = ((7-i)*ap[0] + i*ap[1]) / 7;
-				}else{
-					for(int32 i = 1; i < 5; i++)
-						ap[i+1] = ((5-i)*ap[0] + i*ap[1]) / 5;
-					ap[6] = 0;
-					ap[7] = 0xFF;
-				}
-				uint64 bits = (uint64)le32(src+2) | (uint64)le16(src+6) << 32;
-				for(int32 k = 0; k < 16; k++, bits >>= 3)
-					a[k] = ap[bits & 7];
-			}
+			uint64 lo, hi, a0 = 0, a1 = 0;
+			dxtColors(dxt, cb, &lo, &hi);
+			if(dxt != 1)
+				dxtAlphas(dxt, src, &a0, &a1);
 			uint32 idx = le32(cb+4);
 			for(int32 k = 0; k < 16; k++, idx >>= 2){
-				uint8 *d = dst + ((by + (k>>2))*w + bx + (k&3))*4;
-				const uint8 *cc = c[idx & 3];
-				d[0] = cc[0]; d[1] = cc[1]; d[2] = cc[2];
-				d[3] = dxt == 1 ? cc[3] : a[k];
+				uint32 v = dxtPick(lo, hi, idx & 3);
+				if(dxt != 1)
+					v = RGBA_SETA(v, ((k < 8 ? a0 : a1) >> ((k & 7)*8)) & 0xFF);
+				d32[(by + (k>>2))*w + bx + (k&3)] = v;
+			}
+		}
+}
+
+// DXT1 level: has it a transparent texel (a 3 colour block using index 3)?
+static bool
+dxt1HasCutout(const uint8 *src, int32 w, int32 h)
+{
+	int32 n = (w/4)*(h/4);
+	for(int32 i = 0; i < n; i++, src += 8)
+		if(le16(src) <= le16(src+2)){
+			uint32 idx = le32(src+4);
+			if(idx & (idx >> 1) & 0x55555555)
+				return true;
+		}
+	return false;
+}
+
+// DXT blocks straight into the swizzled VRAM layout (w, h >= 4: a block's
+// 16 texels are contiguous in the Morton order): 16 bit (565 or 1555, DXT1)
+// or A8R8G8B8. The same texels as decodeDXT + uploadLevel, in one pass.
+static void
+dxtToSwizzled(int32 dxt, int32 fmt, const uint8 *src, int32 w, int32 h,
+              const uint32 *tx, const uint32 *ty, void *out)
+{
+	dxtExpandInit();
+	uint16 *o16 = (uint16*)out;
+	uint32 *o32 = (uint32*)out;
+	int32 bsize = dxt == 1 ? 8 : 16;
+	for(int32 by = 0; by < h; by += 4)
+		for(int32 bx = 0; bx < w; bx += 4, src += bsize){
+			const uint8 *cb = dxt == 1 ? src : src + 8;
+			uint32 base = tx[bx] | ty[by];
+			uint64 lo, hi;
+			dxtColors(dxt, cb, &lo, &hi);
+			uint32 idx = le32(cb+4);
+			if(fmt != PS3_VRAM_ARGB8){
+				// the four colours in 16 bits, in one register
+				uint64 pal = 0;
+				for(uint32 i = 0; i < 4; i++){
+					uint32 v = dxtPick(lo, hi, i);
+					uint32 r = RGBA_R(v), g = RGBA_G(v), b = RGBA_B(v), a = RGBA_A(v);
+					uint32 p = fmt == PS3_VRAM_ARGB1555 ?
+						(a >= 128 ? 0x8000 : 0) | (r>>3)<<10 | (g>>3)<<5 | b>>3 :
+						(r>>3)<<11 | (g>>2)<<5 | b>>3;
+					pal |= (uint64)p << (i*16);
+				}
+				uint16 *d = o16 + base;
+				for(int32 k = 0; k < 16; k++, idx >>= 2)
+					d[mortX8[k & 3] | mortY8[k >> 2]] = (uint16)(pal >> ((idx & 3)*16));
+			}else{
+				uint64 a0 = 0, a1 = 0;
+				if(dxt != 1)
+					dxtAlphas(dxt, src, &a0, &a1);
+				uint32 *d = o32 + base;
+				for(int32 k = 0; k < 16; k++, idx >>= 2){
+					uint32 v = dxtPick(lo, hi, idx & 3);
+					uint32 a = dxt != 1 ? (uint32)(((k < 8 ? a0 : a1) >> ((k & 7)*8)) & 0xFF) : RGBA_A(v);
+					d[mortX8[k & 3] | mortY8[k >> 2]] = a<<24 | RGBA_R(v)<<16 | RGBA_G(v)<<8 | RGBA_B(v);
+				}
 			}
 		}
 }
@@ -771,6 +889,47 @@ uploadMipChain(Raster *raster, Ps3Raster *natras, uint8 *rgba)
 		rwFree(prev);
 }
 
+// A DXT level written by the game straight into its swizzled VRAM (see
+// dxtToSwizzled). false: not this way (linear, tiny, or level 0 of a
+// texture whose mip levels are made from it: decodeDXT + uploadLevel)
+static bool
+uploadDXTDirect(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blocks)
+{
+	int32 w = levelDim(raster->originalWidth, level);
+	int32 h = levelDim(raster->originalHeight, level);
+	if(!natras->swizzled || w < 4 || h < 4 || level >= natras->numLevels || natras->vram == nil)
+		return false;
+	if(level == 0 && natras->autogenMipmap && natras->numLevels > 1)
+		return false;
+	int32 dxt = natras->texFormat == PS3_TEX_DXT1 ? 1 :
+	            natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
+	if(natras->vramFmt != PS3_VRAM_ARGB8){
+		if(dxt != 1)
+			return false;
+		// level 0 picks the format (as uploadLevel)
+		if(level == 0)
+			natras->vramFmt = dxt1HasCutout(blocks, w, h) ? PS3_VRAM_ARGB1555 : PS3_VRAM_RGB565;
+	}
+	uint64 t0 = texProfNow();
+	uint32 bytes = w*h*(natras->vramFmt != PS3_VRAM_ARGB8 ? 2 : 4);
+	uint8 *buf = getScratch(bytes + (w+h)*4);
+	if(buf == nil)
+		return false;
+	uint32 *tx = (uint32*)(buf + ((bytes + 3) & ~3));
+	uint32 *ty = tx + w;
+	swizzleTables(tx, ty, w, h);
+	dxtToSwizzled(dxt, natras->vramFmt, blocks, w, h, tx, ty, buf);
+	memcpy(natras->vram + natras->levelOffset[level], buf, bytes);
+	vramFlush(natras->vram + natras->levelOffset[level], bytes);
+	texProfile.us[TEXPROF_DXT] += texProfNow() - t0;
+	texProfile.levels++;
+	texProfile.texels += w*h;
+	drawStats.texUploadBytes += bytes;
+	natras->validLevels |= 1<<level;
+	textureCacheTouched();
+	return true;
+}
+
 // VRAM (A8R8G8B8) back into RGBA8 bytes. Slow (the CPU reads VRAM): only
 // for read locks, which the game hardly ever does.
 static void
@@ -882,6 +1041,13 @@ unlockTexture(Raster *raster, Ps3Raster *natras, int32 level)
 		int32 w = levelDim(raster->originalWidth, level);
 		int32 h = levelDim(raster->originalHeight, level);
 		uint8 *decoded = nil;
+		if(natras->isCompressed && uploadDXTDirect(raster, natras, level, natras->staging)){
+			natras->serial++;
+			rwFree(natras->staging);
+			natras->staging = nil;
+			natras->lockedLevel = -1;
+			return;
+		}
 		if(natras->isCompressed){
 			// DXT: decompressed here (the RSX could take the blocks, but
 			// linear compressed textures don't repeat)
