@@ -60,7 +60,13 @@ enum Config {
 	NUMALPHALIST = 20,
 	NUMALPHAENTITYLIST = 150,
 	NUMCOLCACHELINKS = 200,
+#ifdef __PS3__
+	// big fights can use up 800: a reference that isn't registered
+	// leaves a dangling pointer when its entity is deleted (see References.cpp)
+	NUMREFERENCES = 4000,
+#else
 	NUMREFERENCES = 800,
+#endif
 
 	// Zones
 	NUMAUDIOZONES = 36,

@@ -5,7 +5,7 @@
 class CTreadable : public CBuilding
 {
 public:
-	static void *operator new(size_t);
+	static void *operator new(size_t) POOL_NEW_NOEXCEPT;
 	static void operator delete(void*, size_t);
 
 	int16 m_nodeIndices[2][12];	// first car, then ped

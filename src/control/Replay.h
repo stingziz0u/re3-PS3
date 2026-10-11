@@ -233,7 +233,7 @@ private:
 	static uint8* pPickups;
 	static uint8* pReferences;
 	static uint8 BufferStatus[NUM_REPLAYBUFFERS];
-	static uint8 Buffers[NUM_REPLAYBUFFERS][REPLAYBUFFERSIZE];
+	alignas(16) static uint8 Buffers[NUM_REPLAYBUFFERS][REPLAYBUFFERSIZE];	// packets hold floats: keep them aligned (PS3)
 	static bool bPlayingBackFromFile;
 	static bool bReplayEnabled;
 	static uint32 SlowMotion;

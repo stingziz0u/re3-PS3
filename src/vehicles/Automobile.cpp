@@ -2422,8 +2422,8 @@ CAutomobile::FireTruckControl(void)
 		float targetCannonAngle = fwdAngle - targetAngle;
 		float angleDelta = CTimer::GetTimeStep()*0.01f;
 		float cannonDelta = targetCannonAngle - m_fCarGunLR;
-		while(cannonDelta < PI) cannonDelta += TWOPI;
-		while(cannonDelta > PI) cannonDelta -= TWOPI;
+		while (PS3_ANGLE_OK(cannonDelta) && cannonDelta < PI) cannonDelta += TWOPI;
+		while (PS3_ANGLE_OK(cannonDelta) && cannonDelta > PI) cannonDelta -= TWOPI;
 		if(Abs(cannonDelta) < angleDelta)
 			m_fCarGunLR = targetCannonAngle;
 		else if(cannonDelta > 0.0f)

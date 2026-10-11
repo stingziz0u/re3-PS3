@@ -5,11 +5,16 @@
 #                           video/audio/pad, all to the log  -> re3-ps3-stage1.pkg
 #   make -C ps3             the game (stage 2)               -> re3-ps3-<version>.pkg
 #   make -C ps3 DEBUG=1     debug build (-g, asserts)        -> ...-debug.pkg
+#   make -C ps3 FTRACE=1    with the function trace of peds, weapons, collision,
+#                           HUD, radar... dumped to the log at a crash
+#                                                            -> ...-ftrace.pkg
 #   make -C ps3 verify      patch level of the tree and of the built PKG
+#   make -C ps3 crash LOG=<re3-ps3.log>
+#                           where the [crash] lines of a log are in the code
 #   make -C ps3 clean       remove obj/ and build/ (not the .pkg files)
 #
-# Each variant has its own obj/ and build/ folder: switching STAGE or DEBUG
-# does not need a make clean.
+# Each variant has its own obj/ and build/ folder: switching STAGE, DEBUG or
+# FTRACE does not need a make clean.
 #---------------------------------------------------------------------------------
 
 ifeq ($(strip $(PS3DEV)),)
@@ -19,9 +24,10 @@ ifeq ($(strip $(PSL1GHT)),)
   export PSL1GHT := $(PS3DEV)
 endif
 
-VERSION := 1.0-alpha
+VERSION := 1.1-alpha
 STAGE   ?= 2
 DEBUG   ?= 0
+FTRACE  ?= 0
 
 APPID   := RE3PS3000
 ifeq ($(STAGE),1)
@@ -33,6 +39,9 @@ else
 endif
 ifeq ($(DEBUG),1)
   VARIANT := $(VARIANT)-debug
+endif
+ifeq ($(FTRACE),1)
+  VARIANT := $(VARIANT)-ftrace
 endif
 
 ROOT     := $(abspath $(CURDIR)/..)
@@ -113,6 +122,14 @@ endif
 # own TOC block (see the check target).
 COMMON_FLAGS += -mminimal-toc
 
+# re3 was written for MSVC, which doesn't exploit undefined behaviour the way
+# GCC does. reVC-PS3's Riot crash was a loop that read one past an array
+# before its bound check: GCC took the read as proof the loop ends inside the
+# array and dropped the check. These keep GCC's code close to what MSVC made:
+# loop bounds aren't derived from UB, null checks after a dereference stay,
+# and signed overflow wraps.
+COMMON_FLAGS += -fno-aggressive-loop-optimizations -fno-delete-null-pointer-checks -fwrapv
+
 ifeq ($(DEBUG),1)
   COMMON_FLAGS += -g -DPS3_DEBUG
 else
@@ -134,7 +151,7 @@ WRAPFLAGS := $(foreach w,$(WRAP),-Wl,--wrap=$(w))
 # split it and emit r2off stubs, which hang the PS3 at boot. Fail the link
 # instead.
 LDFLAGS := -Wl,--no-multi-toc $(WRAPFLAGS) $(LIBPSL1GHT_LIB) -L$(PORTLIBS)/lib
-LIBS    := -lio -lsysmodule -lsysutil -lrt -llv2 -lm
+LIBS    := -llv2dbg -lio -lsysmodule -lsysutil -lrt -llv2 -lm
 ifneq ($(STAGE),1)
   LIBS  := -lrsx -lgcm_sys -laudio $(LIBS)
 endif
@@ -148,10 +165,42 @@ GAME_OBJS  := $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS) $(PS3_SRCS)) \
 
 ELF := $(OBJDIR)/$(TARGET).elf
 
+# Diagnostics (FTRACE=1): the code where crashes are most likely is built
+# with a function entry/exit trace (ps3_log.cpp keeps the last 16384 events and
+# dumps them when the game thread dies). The small math/entity/list helpers
+# are left out. It costs a little CPU on every call, so the release is
+# built without it; the crumbs stay in both.
+FTRACE_DIRS := peds weapons collision render/Shadows render/Particle core/World \
+  render/Hud core/Radar render/Font render/Sprite2d render/SpecialFX text/Messages \
+  control/Darkel control/Pickups control/Garages animation/AnimManager \
+  animation/RpAnimBlend animation/AnimBlendAssociation animation/AnimBlendClumpData \
+  core/References core/EventList core/Accident core/Fire entities/Physical \
+  render/Glass render/WaterCannon core/Ropes render/Skidmarks render/Antennas render/Rubbish \
+  render/Coronas render/PointLights render/Fluff weapons/WeaponEffects
+FTRACE_EXCLUDE := math/ Vector Matrix Quaternion General.h Timer.h Rect.h templates.h \
+  common.h Lists.h Placeable.h Entity.h Physical.h PtrList.h PtrNode.h ColPoint.h \
+  ColModel.h ColTriangle.h ColBox.h ColSphere.h ColLine.h CompressedVector.h \
+  World.h Pools.h ModelInfo.h Camera.h Pad.h Stats.h librw /include/ c++/
+comma := ,
+FTRACE_ALL := $(filter $(foreach d,$(FTRACE_DIRS),$(OBJDIR)/src/$(d)%),$(GAME_OBJS))
+ifeq ($(FTRACE),1)
+$(FTRACE_ALL): OBJ_FLAGS := -finstrument-functions \
+  -finstrument-functions-exclude-file-list=$(subst $() ,$(comma),$(strip $(FTRACE_EXCLUDE)))
+endif
+# the flags live here: rebuild those objects when this file changes, or when a
+# tree built with the trace on is built without it
+$(FTRACE_ALL): $(CURDIR)/Makefile $(OBJDIR)/ftrace.mode
+$(OBJDIR)/ftrace.mode: FORCE
+	@mkdir -p $(dir $@)
+	@echo 'ftrace $(FTRACE)' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+.DEFAULT_GOAL := all
+
 #---------------------------------------------------------------------------------
 # Rules
 #---------------------------------------------------------------------------------
-.PHONY: all clean check verify pkgfiles FORCE
+.PHONY: all clean check verify crash pkgfiles FORCE
 
 all: $(OUT_PKG)
 
@@ -204,18 +253,26 @@ $(OBJDIR)/GitSHA1.cpp:
 	@echo '#define GIT_SHA1 "re3-ps3 patch $(PATCHLEVEL)"' > $@
 	@echo 'const char* g_GIT_SHA1 = GIT_SHA1;' >> $@
 
-$(OBJDIR)/GitSHA1.o: $(OBJDIR)/GitSHA1.cpp
+$(OBJDIR)/GitSHA1.o: $(OBJDIR)/GitSHA1.cpp $(OBJDIR)/flags.mode
 	@$(CXX) $(GAME_FLAGS) -c $< -o $@
 
-$(OBJDIR)/vendor/%.o: $(ROOT)/vendor/%.cpp
+# Every object depends on the compiler flags: a tree built with other flags
+# (before patch 41) is rebuilt without a make clean.
+$(OBJDIR)/flags.mode: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(subst ','',$(GAME_FLAGS) $(LIBRW_FLAGS))' > $@.tmp
+	@cmp -s $@.tmp $@ || mv $@.tmp $@
+	@rm -f $@.tmp
+
+$(OBJDIR)/vendor/%.o: $(ROOT)/vendor/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
 	@$(CXX) $(LIBRW_FLAGS) -c $< -o $@
 
-$(OBJDIR)/src/%.o: $(SRC)/%.cpp
+$(OBJDIR)/src/%.o: $(SRC)/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(GAME_FLAGS) -c $< -o $@
+	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) -c $< -o $@
 
 # Which patch level the tree and the built PKG are at
 verify:
@@ -223,6 +280,13 @@ verify:
 	@if [ -f $(OUT_PKG) ]; then \
 	   echo "pkg  : patch $$(sed -n 's/^patch //p' $(PKGFILES)/USRDIR/VERSION.TXT 2>/dev/null), $(OUT_PKG) built $$(date -r $(OUT_PKG) '+%Y-%m-%d %H:%M')"; \
 	 else echo "pkg  : $(OUT_PKG) not built yet"; fi
+
+# The [crash] lines carry the address of the code that left each step
+# (@xxxxxxxx) and the [ftrace] lines the last calls: function names from this
+# build's ELF (addr2line can't read PPU64 function symbols, see the script).
+crash:
+	@if [ -z "$(LOG)" ]; then echo "usage: make -C ps3 crash LOG=<re3-ps3.log>"; exit 1; fi
+	@python3 $(CURDIR)/tools/crashaddr.py $(ELF) "$(LOG)"
 
 clean:
 	@rm -rf obj build

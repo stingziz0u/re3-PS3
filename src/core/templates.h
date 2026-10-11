@@ -41,7 +41,15 @@ class CPool
 	int32  m_allocPtr;
 
 public:
-	CPool(int32 size){
+#ifdef __PS3__
+	const char *m_ps3Name;
+	int m_ps3FullCount;
+#endif
+	CPool(int32 size, const char *name = "?"){
+#ifdef __PS3__
+		m_ps3Name = name;
+		m_ps3FullCount = 0;
+#endif
 		m_entries = (U*)new uint8[sizeof(U)*size];
 		m_flags = new uint8[size];
 #ifdef __PS3__
@@ -103,14 +111,24 @@ public:
 #ifdef FIX_BUGS
 			if (++m_allocPtr >= m_size) {
 				m_allocPtr = 0;
-				if (wrapped)
+				if (wrapped) {
+#ifdef __PS3__
+					if (m_ps3FullCount++ < 8 || (m_ps3FullCount & 255) == 0)
+						PS3_PoolFull(m_ps3Name, m_size);
+#endif
 					return nil;
+				}
 				wrapped = true;
 			}
 #else
 			if(++m_allocPtr == m_size){
-				if(wrapped)
+				if(wrapped){
+#ifdef __PS3__
+					if(m_ps3FullCount++ < 8 || (m_ps3FullCount & 255) == 0)
+						PS3_PoolFull(m_ps3Name, m_size);
+#endif
 					return nil;
+				}
 				wrapped = true;
 				m_allocPtr = 0;
 			}
@@ -151,6 +169,15 @@ public:
 		       (T*)&m_entries[handle >> 8] : nil;
 	}
 	int32 GetIndex(T *entry){
+#ifdef __PS3__
+		// nil or not one of ours: m_flags[i] would be read far outside the
+		// array (on PC the old 32-bit garbage was usually readable)
+		int ps3Idx; bool ps3Free;
+		if (!PS3_Owns(entry, &ps3Idx, &ps3Free)) {
+			PS3_PoolFull(m_ps3Name, -1);
+			return -1;
+		}
+#endif
 		int i = GetJustIndex_NoFreeAssert(entry);
 		return m_flags[i] + (i<<8);
 	}
@@ -159,6 +186,17 @@ public:
 		assert(!GetIsFree(index));
 		return index;
 	}
+#ifdef __PS3__
+	// is p the start of one of this pool's slots (live or free)?
+	bool PS3_Owns(const void *p, int *idx, bool *isFree) const {
+		uintptr a = (uintptr)p, b = (uintptr)m_entries;
+		if (m_entries == nil || a < b || a >= b + sizeof(U)*m_size || (a - b) % sizeof(U) != 0)
+			return false;
+		*idx = (int)((a - b) / sizeof(U));
+		*isFree = GetIsFree(*idx);
+		return true;
+	}
+#endif
 	int32 GetJustIndex_NoFreeAssert(T* entry){
 		int index = ((U*)entry - m_entries);
 		assert((U*)entry == (U*)&m_entries[index]); // cast is unsafe - check required

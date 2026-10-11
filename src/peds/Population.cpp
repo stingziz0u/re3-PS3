@@ -572,7 +572,11 @@ void
 CPopulation::AddToPopulation(float minDist, float maxDist, float minDistOffScreen, float maxDistOffScreen)
 {
 	uint32 pedTypeToAdd;
+#ifdef __PS3__
+	int32 modelToAdd = -1;	// a forced ped type after a gang roll left it unset (MSVC: stale stack)
+#else
 	int32 modelToAdd;
+#endif
 	int pedAmount;
 
 	CZoneInfo zoneInfo;
@@ -622,6 +626,10 @@ CPopulation::AddToPopulation(float minDist, float maxDist, float minDistOffScree
 		}
 		if (!addCop && m_AllRandomPedsThisType > PEDTYPE_PLAYER1)
 			pedTypeToAdd = m_AllRandomPedsThisType;
+#ifdef __PS3__
+		if (pedTypeToAdd == PEDTYPE_COP && modelToAdd < 0)
+			modelToAdd = COP_STREET;
+#endif
 
 		if (pedTypeToAdd >= PEDTYPE_GANG1 && pedTypeToAdd <= PEDTYPE_GANG9) {
 			int randVal = CGeneral::GetRandomNumber() % 100;
@@ -671,7 +679,11 @@ CPopulation::AddToPopulation(float minDist, float maxDist, float minDistOffScree
 				} else if (modelToAdd == COP_ARMY && !CModelInfo::GetModelInfo(MI_ARMY)->GetRwObject()) {
 					return;
 				}
+#ifdef __PS3__
+			} else if (modelToAdd < 0 || !CModelInfo::GetModelInfo(modelToAdd)->GetRwObject()) {
+#else
 			} else if (!CModelInfo::GetModelInfo(modelToAdd)->GetRwObject()) {
+#endif
 				return;
 			}
 			generatedCoors.z += 0.7f;

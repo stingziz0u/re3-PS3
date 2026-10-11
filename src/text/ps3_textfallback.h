@@ -7,6 +7,15 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEG_FRT", "FRAME RATE" },	// re3-PS3's own
 	{ "FEG_F30", "30 FPS" },	// re3-PS3's own
 	{ "FEG_F60", "60 FPS" },	// re3-PS3's own
+	{ "FEC_S3P", "3RD PERSON SENSITIVITY" },	// re3-PS3's own
+	{ "FEC_S1P", "1ST PERSON SENSITIVITY" },	// re3-PS3's own
+	{ "FEC_SN0", "50%" },	// re3-PS3's own
+	{ "FEC_SN1", "75%" },	// re3-PS3's own
+	{ "FEC_SN2", "100%" },	// re3-PS3's own
+	{ "FEC_SN3", "125%" },	// re3-PS3's own
+	{ "FEC_SN4", "150%" },	// re3-PS3's own
+	{ "FEC_SN5", "175%" },	// re3-PS3's own
+	{ "FEC_SN6", "200%" },	// re3-PS3's own
 	{ "FEA_2SP", "2 SPEAKERS" },
 	{ "FEA_4SP", "MORE THAN 2 SPEAKERS" },
 	{ "FEA_DO", "=" },

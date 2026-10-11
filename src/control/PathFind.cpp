@@ -1070,8 +1070,8 @@ CPathFind::SwitchRoadsInAngledArea(float x1, float y1, float z1, float x2, float
 
 	// angle of vector from p2 to p1
 	float angle = CGeneral::GetRadianAngleBetweenPoints(x1, y1, x2, y2) + HALFPI;
-	while(angle < 0.0f) angle += TWOPI;
-	while(angle > TWOPI) angle -= TWOPI;
+	while (PS3_ANGLE_OK(angle) && angle < 0.0f) angle += TWOPI;
+	while (PS3_ANGLE_OK(angle) && angle > TWOPI) angle -= TWOPI;
 	// vector from p1 to p2
 	CVector2D v12(x2 - x1, y2 - y1);
 	float len12 = v12.Magnitude();

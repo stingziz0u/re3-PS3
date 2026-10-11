@@ -58,6 +58,10 @@ void CCarGenerator::DoInternalProcessing()
 		return;
 	if (CModelInfo::IsBoatModel(m_nModelIndex)){
 		CBoat* pBoat = new CBoat(m_nModelIndex, PARKED_VEHICLE);
+#ifdef __PS3__
+		if (pBoat == nil)
+			return;	// vehicle pool full (POOL_NEW_NOEXCEPT): try again later
+#endif
 		pBoat->SetIsStatic(false);
 		pBoat->bEngineOn = false;
 		CVector pos = m_vecPos;
@@ -98,8 +102,15 @@ void CCarGenerator::DoInternalProcessing()
 			CAutomobile* pCar;
 
 			// So game crashes if it's bike :D
+#ifdef __PS3__
+			pCar = nil;
+#endif
 			if (((CVehicleModelInfo*)CModelInfo::GetModelInfo(m_nModelIndex))->m_vehicleType != VEHICLE_TYPE_BIKE)
 				pCar = new CAutomobile(m_nModelIndex, PARKED_VEHICLE);
+#ifdef __PS3__
+			if (pCar == nil)
+				return;	// vehicle pool full (POOL_NEW_NOEXCEPT): try again later
+#endif
 
 			pCar->SetIsStatic(false);
 			pCar->bEngineOn = false;

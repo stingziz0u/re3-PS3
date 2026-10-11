@@ -397,6 +397,19 @@ rasterHasAlpha(Raster *raster)
 static void
 setRasterStage(uint32 stage, Raster *raster)
 {
+	// Something that isn't one of our rasters (reVC patch 22: a particle
+	// frame past its raster table gave an RwTexture*) would program the RSX
+	// with a garbage texture address and format: the GPU can hang the whole
+	// console. Draw untextured instead.
+	if(raster && raster->platform != PLATFORM_PS3){
+		static int logged;
+		if(logged < 8){
+			logged++;
+			rsxLog("[rsx] texture stage %u: %p is not a PS3 raster (platform %d): drawn without it",
+			       stage, raster, raster->platform);
+		}
+		raster = nil;
+	}
 	if(raster != rwStateCache.texstage[stage].raster){
 		rwStateCache.texstage[stage].raster = raster;
 		bool32 alpha = raster ? rasterHasAlpha(raster) : 0;

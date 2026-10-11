@@ -23,13 +23,13 @@ cAudioScriptObject::Reset()
 }
 
 void *
-cAudioScriptObject::operator new(size_t sz)
+cAudioScriptObject::operator new(size_t sz) POOL_NEW_NOEXCEPT
 {
 	return CPools::GetAudioScriptObjectPool()->New();
 }
 
 void *
-cAudioScriptObject::operator new(size_t sz, int handle)
+cAudioScriptObject::operator new(size_t sz, int handle) POOL_NEW_NOEXCEPT
 {
 	return CPools::GetAudioScriptObjectPool()->New(handle);
 }

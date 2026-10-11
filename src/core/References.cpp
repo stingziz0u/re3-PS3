@@ -5,6 +5,9 @@
 #include "PlayerPed.h"
 #include "Pools.h"
 #include "References.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 CReference CReferences::aRefs[NUMREFERENCES];
 CReference *CReferences::pEmptyList;
@@ -41,6 +44,13 @@ CEntity::RegisterReference(CEntity **pent)
 		m_pFirstReference = ref;
 		return;
 	}
+#ifdef __PS3__
+	// the pointer at *pent won't be cleared when this entity is deleted
+	static int nFailed;
+	if (nFailed++ < 8 || (nFailed & 1023) == 0)
+		PS3_Logf("[refs] reference pool (%d) empty: entity %p model %d not tracked (%d times)",
+		         NUMREFERENCES, this, GetModelIndex(), nFailed);
+#endif
 	return;
 }
 

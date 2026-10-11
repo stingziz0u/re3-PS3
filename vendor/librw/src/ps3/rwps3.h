@@ -117,6 +117,16 @@ struct Ps3Raster
 	uint8  *staging;	// the locked level, in main memory
 	int8    tile;		// camera / depth buffer: tile region + 1 (0 linear)
 	bool    zcomp, zcull;
+	uint8   vramFmt;	// PS3_VRAM_*: how the texels are kept in VRAM
+};
+
+// VRAM formats of a texture (stage 2). DXT1 (most of VC's PC textures) is
+// kept in 16 bits instead of A8R8G8B8: half the VRAM. Its colours are 5:6:5
+// anyway; the 1-bit alpha of punch-through DXT1 fits A1R5G5B5
+enum {
+	PS3_VRAM_ARGB8 = 0,
+	PS3_VRAM_RGB565,	// opaque DXT1 (alpha read as 1)
+	PS3_VRAM_ARGB1555,	// DXT1 with transparent texels
 };
 
 // Video settings of the RSX renderer (stage 2)
@@ -134,6 +144,7 @@ enum { GPU_MAX_TIMERS = 30, GPU_MARK_FRAME_START = 62, GPU_MARK_FRAME_END = 63 }
 void gpuMark(int32 id);
 extern bool gpuTimersOn;	// default off (the timestamp reports hang the RSX)
 extern bool additiveKill;	// additive draws kill the fragments that add nothing (default on)
+extern bool dxt1As16;		// DXT1 textures in 16 bits in VRAM (default on; USRDIR/dxt32.txt turns it off)
 extern bool rsxTiling;		// camera buffers tiled + depth compressed + ZCULL (default on; set before the first camera)
 extern bool zcullOn;		// ZCULL in use (default on; the autotest compares)
 extern int32 blendAlphaRef;	// >0: alpha test ref for alpha blended draws without Z write (smoke...); 0 the game's

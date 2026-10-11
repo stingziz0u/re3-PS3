@@ -4,7 +4,7 @@
 #include "World.h"
 #include "Dummy.h"
 
-void *CDummy::operator new(size_t sz) { return CPools::GetDummyPool()->New();  }
+void *CDummy::operator new(size_t sz) POOL_NEW_NOEXCEPT { return CPools::GetDummyPool()->New();  }
 void CDummy::operator delete(void *p, size_t sz) { CPools::GetDummyPool()->Delete((CDummy*)p); }
 
 void

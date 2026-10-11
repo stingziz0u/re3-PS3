@@ -896,6 +896,10 @@ int32 CRadar::GetActualBlipArrayIndex(int32 i)
 {
 	if (i == -1)
 		return -1;
+#ifdef __PS3__
+	else if ((uint16)i >= NUMRADARBLIPS)
+		return -1;	// a stale or bad handle: not past the array
+#endif
 	else if ((i & 0xFFFF0000) >> 16 != ms_RadarTrace[(uint16)i].m_BlipIndex)
 		return -1;
 	else

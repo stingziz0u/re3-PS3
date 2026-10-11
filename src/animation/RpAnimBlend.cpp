@@ -134,6 +134,9 @@ FrameInitCBnonskin(AnimBlendFrameData *frameData, void*)
 {
 	frameData->flag = 0;
 	frameData->resetPos = *RwMatrixGetPos(RwFrameGetMatrix(frameData->frame));
+#ifdef __PS3__
+	frameData->nodeID = -1;	// no bone tags without a skin; was heap garbage
+#endif
 }
 
 void

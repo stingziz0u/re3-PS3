@@ -373,7 +373,7 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 			f6 = temp;
 		}
 
-		CPowerPoints::GenerateNewOne(f1, f2, f3, f4, f5, f6, *(uint8*)&ScriptParams[6]);
+		CPowerPoints::GenerateNewOne(f1, f2, f3, f4, f5, f6, (uint8)ScriptParams[6]);
 
 		return 0;
 	}

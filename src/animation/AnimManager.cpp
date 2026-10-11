@@ -804,7 +804,7 @@ CAnimManager::LoadAnimFile(int fd, bool compress)
 		uint32 size;
 	};
 	IfpHeader anpk, info, name, dgan, cpan, anim;
-	int numANPK;
+	int numANPK = 0;
 #ifdef __PS3__
 	alignas(16) char buf[256];	// read through fbuf: floats must be aligned on the PPU
 #else

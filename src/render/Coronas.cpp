@@ -354,10 +354,14 @@ CCoronas::Render(void)
 					switch(aCoronas[i].flareType){
 					case FLARE_SUN: flare = SunFlareDef; break;
 					case FLARE_HEADLIGHTS: flare = HeadLightsFlareDef; break;
+#ifdef __PS3__
+					default: flare = nil; break;	// a script's flare type past 2: was an unset pointer
+#else
 					default: assert(0);
+#endif
 					}
 
-					for(; flare->texture; flare++){
+					for(; flare && flare->texture; flare++){
 						RwRenderStateSet(rwRENDERSTATETEXTURERASTER, RwTextureGetRaster(gpCoronaTexture[flare->texture + 4]));
 						CSprite::RenderOneXLUSprite(
 							(spriteCoors.x - (screenw/2)) * flare->position + (screenw/2),

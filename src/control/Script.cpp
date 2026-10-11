@@ -1634,7 +1634,8 @@ ScriptBroken(const char *file, int line)
 static inline bool
 GlobalVarOk(uint32 index)
 {
-	if (index >= 8 && index + 4 <= (uint32)CTheScripts::GetSizeOfVariableSpace())
+	// a global is read as an int32/float in place: unaligned floats fault on the PPU
+	if (index >= 8 && index + 4 <= (uint32)CTheScripts::GetSizeOfVariableSpace() && (index & 3) == 0)
 		return true;
 	script_bad();
 	return false;

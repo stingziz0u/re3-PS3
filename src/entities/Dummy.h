@@ -12,7 +12,7 @@ public:
 	void Add(void);
 	void Remove(void);
 
-	static void *operator new(size_t);
+	static void *operator new(size_t) POOL_NEW_NOEXCEPT;
 	static void operator delete(void*, size_t);
 };
 

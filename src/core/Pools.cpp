@@ -35,23 +35,23 @@ CPools::Initialise(void)
 {
 	PUSH_MEMID(MEMID_POOLS);
 	CHECKMEM("before pools");
-	ms_pPtrNodePool = new CCPtrNodePool(NUMPTRNODES);
+	ms_pPtrNodePool = new CCPtrNodePool(NUMPTRNODES, "PtrNode");
 	CHECKMEM("after CPtrNodePool");
-	ms_pEntryInfoNodePool = new CEntryInfoNodePool(NUMENTRYINFOS);
+	ms_pEntryInfoNodePool = new CEntryInfoNodePool(NUMENTRYINFOS, "EntryInfoNode");
 	CHECKMEM("after CEntryInfoNodePool");
-	ms_pPedPool = new CPedPool(NUMPEDS);
+	ms_pPedPool = new CPedPool(NUMPEDS, "Peds");
 	CHECKMEM("after CPedPool");
-	ms_pVehiclePool = new CVehiclePool(NUMVEHICLES);
+	ms_pVehiclePool = new CVehiclePool(NUMVEHICLES, "Vehicles");
 	CHECKMEM("after CVehiclePool");
-	ms_pBuildingPool = new CBuildingPool(NUMBUILDINGS);
+	ms_pBuildingPool = new CBuildingPool(NUMBUILDINGS, "Buildings");
 	CHECKMEM("after CBuildingPool");
-	ms_pTreadablePool = new CTreadablePool(NUMTREADABLES);
+	ms_pTreadablePool = new CTreadablePool(NUMTREADABLES, "Treadables");
 	CHECKMEM("after CTreadablePool");
-	ms_pObjectPool = new CObjectPool(NUMOBJECTS);
+	ms_pObjectPool = new CObjectPool(NUMOBJECTS, "Objects");
 	CHECKMEM("after CObjectPool");
-	ms_pDummyPool = new CDummyPool(NUMDUMMIES);
+	ms_pDummyPool = new CDummyPool(NUMDUMMIES, "Dummys");
 	CHECKMEM("after CDummyPool");
-	ms_pAudioScriptObjectPool = new CAudioScriptObjectPool(NUMAUDIOSCRIPTOBJECTS);
+	ms_pAudioScriptObjectPool = new CAudioScriptObjectPool(NUMAUDIOSCRIPTOBJECTS, "AudioScriptObj");
 	CHECKMEM("after pools");
 	POP_MEMID();
 }

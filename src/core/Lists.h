@@ -7,7 +7,7 @@ public:
 	CPtrNode *prev;
 	CPtrNode *next;
 
-	void *operator new(size_t);
+	void *operator new(size_t) POOL_NEW_NOEXCEPT;
 	void operator delete(void *p, size_t);
 };
 
@@ -81,7 +81,7 @@ public:
 	CEntryInfoNode *prev;
 	CEntryInfoNode *next;
 
-	void *operator new(size_t);
+	void *operator new(size_t) POOL_NEW_NOEXCEPT;
 	void operator delete(void *p, size_t);
 };
 

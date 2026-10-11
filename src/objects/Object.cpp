@@ -16,8 +16,8 @@
 int16 CObject::nNoTempObjects;
 int16 CObject::nBodyCastHealth = 1000;
 
-void *CObject::operator new(size_t sz) { return CPools::GetObjectPool()->New();  }
-void *CObject::operator new(size_t sz, int handle) { return CPools::GetObjectPool()->New(handle);};
+void *CObject::operator new(size_t sz) POOL_NEW_NOEXCEPT { return CPools::GetObjectPool()->New();  }
+void *CObject::operator new(size_t sz, int handle) POOL_NEW_NOEXCEPT { return CPools::GetObjectPool()->New(handle);};
 void CObject::operator delete(void *p, size_t sz) { CPools::GetObjectPool()->Delete((CObject*)p); }
 void CObject::operator delete(void *p, int handle) { CPools::GetObjectPool()->Delete((CObject*)p); }
 

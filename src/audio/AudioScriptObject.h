@@ -12,8 +12,8 @@ public:
 
 	void Reset(); /// ok
 
-	static void* operator new(size_t);
-	static void* operator new(size_t, int);
+	static void* operator new(size_t) POOL_NEW_NOEXCEPT;
+	static void* operator new(size_t, int) POOL_NEW_NOEXCEPT;
 	static void operator delete(void*, size_t);
 	static void operator delete(void*, int);
 

@@ -31,6 +31,9 @@
 
 #ifdef __PS3__
 extern int8 gbShowFps;
+// Gamepad settings: right stick sensitivity, third and first person (Cam.cpp)
+extern int8 gPS3Sens3rd, gPS3Sens1st;
+const char *sensLevels[] = { "FEC_SN0", "FEC_SN1", "FEC_SN2", "FEC_SN3", "FEC_SN4", "FEC_SN5", "FEC_SN6" };
 #ifdef __PS3__
 // FRAME RATE: 30 (the game's own, re3/PS2) or 60. ps3.cpp paces the flips
 int8 gPS3Fps60;
@@ -465,6 +468,8 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 		INVERT_PAD_SELECTOR
 #ifdef __PS3__	// the camera is the pad's (same re3.ini key as before)
 		FREE_CAM_TOGGLE
+		MENUACTION_CFO_SELECT, "FEC_S3P", { new CCFOSelect((int8*)&gPS3Sens3rd, "Controller", "Sensitivity3rdPerson", sensLevels, 7, false) },
+		MENUACTION_CFO_SELECT, "FEC_S1P", { new CCFOSelect((int8*)&gPS3Sens1st, "Controller", "Sensitivity1stPerson", sensLevels, 7, false) },
 #endif
 #ifndef __PS3__	// no vibration on the PS3 port
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS },

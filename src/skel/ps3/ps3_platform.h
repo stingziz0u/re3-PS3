@@ -26,6 +26,10 @@ void PS3_LogRaw(const char *msg);	// as-is
 void PS3_Log(const char *msg);		// one line
 void PS3_Logf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void PS3_DumpCrumbs(void);
+void PS3_StartWatchdog(void);	// [hang] dump when no frame for 10 s
+void PS3_LogSync(void);	// log onto the disk (fsync)
+void PS3_StopWatchdog(void);
+void PS3_InstallCrashHandler(void);	// liblv2dbg PPU exception handler (if lv2 allows it)
 extern unsigned PS3_crumbFrame;
 
 // ps3_fs.cpp

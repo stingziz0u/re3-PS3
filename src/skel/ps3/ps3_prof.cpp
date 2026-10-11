@@ -84,6 +84,7 @@ void
 PS3_ProfFrame(void)
 {
 	u64 now = sysGetSystemTime();
+	PS3_crumbFrame++;	// the frame number in the [crash] lines
 	if (frameStart)
 		frameTotal += now - frameStart;
 	frameStart = now;
@@ -102,6 +103,7 @@ PS3_ProfFrame(void)
 		timers[i].total = 0;
 	}
 	PS3_Log(line);
+	PS3_LogMemTag("[mem] ");	// heap, free user memory, textures, streaming
 #if PS3_STAGE != 1
 	{
 		uint64_t ns[GPU_TIMERS], frameNs;

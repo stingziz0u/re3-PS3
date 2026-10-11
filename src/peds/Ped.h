@@ -515,8 +515,8 @@ public:
 	CVector m_vecSeekPosEx; // used for OBJECTIVE_GUARD_SPOT
 	float m_distanceToCountSeekDoneEx; // used for OBJECTIVE_GUARD_SPOT
 
-	static void *operator new(size_t);
-	static void *operator new(size_t, int);
+	static void *operator new(size_t) POOL_NEW_NOEXCEPT;
+	static void *operator new(size_t, int) POOL_NEW_NOEXCEPT;
 	static void operator delete(void*, size_t);
 	static void operator delete(void*, int);
 

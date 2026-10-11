@@ -70,7 +70,7 @@ CStoredDetailedAnimationState *CReplay::pPedAnims;
 uint8 *CReplay::pPickups;
 uint8 *CReplay::pReferences;
 uint8 CReplay::BufferStatus[NUM_REPLAYBUFFERS];
-uint8 CReplay::Buffers[NUM_REPLAYBUFFERS][REPLAYBUFFERSIZE];
+alignas(16) uint8 CReplay::Buffers[NUM_REPLAYBUFFERS][REPLAYBUFFERSIZE];
 bool CReplay::bPlayingBackFromFile;
 bool CReplay::bReplayEnabled = true;
 uint32 CReplay::SlowMotion;

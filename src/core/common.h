@@ -58,6 +58,16 @@
 #if defined RW_GL3 || defined __PS3__
 #define RE3_GLFW_INPUT
 #endif
+// Pool-backed classes return nil from operator new when their pool is full.
+// Without noexcept the compiler may run the constructor on that nil (the
+// original game did): with it, `new` gives nil and the callers that check
+// for it (most of them) carry on.
+#ifdef __PS3__
+#define POOL_NEW_NOEXCEPT noexcept
+#else
+#define POOL_NEW_NOEXCEPT
+#endif
+
 #ifdef __PS3__
 #include "ps3_glfw.h"
 // crash breadcrumbs: cheap, in memory; the main thread dumps them to the log
@@ -65,8 +75,16 @@
 extern "C" void PS3_Crumb(const char *tag, int val);
 extern "C" void PS3_ScriptCrumb(const char *name8, int command, unsigned ip);
 #define PS3_CRUMB(tag, val) PS3_Crumb(tag, val)
+extern "C" void PS3_PoolFull(const char *name, int size);	// ps3_log.cpp
+// The "while (a >= PI) a -= TWOPI;" loops of the game: with an infinite or
+// huge angle they never end and the game freezes. A sane angle is left
+// alone; anything else (inf, NaN, |a| >= 100000) is 0.
+extern "C" void PS3_BadAngle(void);	// ps3_log.cpp: crumb + one log line
+static inline bool PS3_AngleOk(float &a) { if (!(a > -100000.0f && a < 100000.0f)) { a = 0.0f; PS3_BadAngle(); } return true; }
+#define PS3_ANGLE_OK(a) PS3_AngleOk(a)
 #else
 #define PS3_CRUMB(tag, val)
+#define PS3_ANGLE_OK(a) true
 #endif
 
 // gotta put this somewhere

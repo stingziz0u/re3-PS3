@@ -4449,7 +4449,13 @@ CMenuManager::ProcessButtonPresses(void)
 				optionSelected = true;
 			}
 		} else {
+#if defined __PS3__ && defined MENU_MAP
+			// on the map X sets the waypoint: it isn't "select" there (the page's only
+			// entry is Back, so it closed the map)
+			if ((CPad::GetPad(0)->GetEnterJustDown() || CPad::GetPad(0)->GetCrossJustDown()) && m_nCurrScreen != MENUPAGE_MAP) {
+#else
 			if (CPad::GetPad(0)->GetEnterJustDown() || CPad::GetPad(0)->GetCrossJustDown()) {
+#endif
 				m_bShowMouse = false;
 				optionSelected = true;
 			}

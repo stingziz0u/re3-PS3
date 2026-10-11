@@ -774,6 +774,16 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] RSX tiling %s", rw::ps3::rsxTiling ? "on (notiles.txt turns it off)" : "OFF (notiles.txt)");
 	}
+	// DXT1 textures in 16 bits in VRAM (half of A8R8G8B8). If a texture ever
+	// looks wrong with it: an empty USRDIR/dxt32.txt goes back to 32 bits
+	{
+		FILE *dt = fopen(PS3_USRDIR "/dxt32.txt", "rb");
+		if (dt) {
+			fclose(dt);
+			rw::ps3::dxt1As16 = false;
+		}
+		PS3_Logf("[5] DXT1 textures in VRAM: %s", rw::ps3::dxt1As16 ? "16 bit (dxt32.txt: 32 bit)" : "32 bit (dxt32.txt)");
+	}
 #endif
 
 	openParams.width = PS3_SCREEN_WIDTH;
@@ -988,9 +998,18 @@ main(int argc, char *argv[])
 
 	(void)argc; (void)argv;
 
+	// newlib gives the top of the heap back to lv2 when more than 128 KB of
+	// it is free (sbrk < 0 unmaps whole 1 MB pages). The game reads freed
+	// memory through stale pointers now and then (e.g. an entity reference
+	// that wasn't registered); on PC that reads old data, here it kills the
+	// game thread. Keep the heap mapped: the memory is reused all the same.
+	mallopt(M_TRIM_THRESHOLD, 0x7fffffff);
+
 	PS3_LogInit();
 	PS3_Logf("[0] main reached: re3-PS3 stage %d, patch " PS3_PATCHLEVEL ", built " __DATE__ " " __TIME__,
 	         PS3_STAGE);
+
+	PS3_InstallCrashHandler();
 
 	ret = sysThreadCreate(&tid, PS3_GameThread, NULL, 1000, PS3_GAME_STACK,
 	                      THREAD_JOINABLE, (char *)"re3");
@@ -999,7 +1018,9 @@ main(int argc, char *argv[])
 		PS3_LogShutdown();
 		return 1;
 	}
+	PS3_StartWatchdog();
 	ret = sysThreadJoin(tid, &retval);
+	PS3_StopWatchdog();
 
 	// -1 without an [8] line = the game thread died (crash) right after the
 	// last line above

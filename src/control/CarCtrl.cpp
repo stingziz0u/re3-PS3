@@ -1338,14 +1338,14 @@ void CCarCtrl::WeaveForOtherCar(CEntity* pOtherEntity, CVehicle* pVehicle, float
 	float angleToWeave = lengthToEvade / 2;
 	if (diffToLeftAngle < angleToWeave){
 		*pAngleToWeaveLeft = angleBetweenVehicles - angleToWeave;
-		while (*pAngleToWeaveLeft < -PI)
+		while (PS3_ANGLE_OK(*pAngleToWeaveLeft) && *pAngleToWeaveLeft < -PI)
 			*pAngleToWeaveLeft += TWOPI;
 	}
 	float diffToRightAngle = LimitRadianAngle(angleBetweenVehicles - *pAngleToWeaveRight);
 	diffToRightAngle = ABS(diffToRightAngle);
 	if (diffToRightAngle < angleToWeave){
 		*pAngleToWeaveRight = angleBetweenVehicles + angleToWeave;
-		while (*pAngleToWeaveRight > PI)
+		while (PS3_ANGLE_OK(*pAngleToWeaveRight) && *pAngleToWeaveRight > PI)
 			*pAngleToWeaveRight -= TWOPI;
 	}
 }
@@ -1386,14 +1386,14 @@ void CCarCtrl::WeaveForPed(CEntity* pOtherEntity, CVehicle* pVehicle, float* pAn
 	float angleToWeave = lengthToEvade / 2;
 	if (diffToLeftAngle < angleToWeave) {
 		*pAngleToWeaveLeft = angleBetweenVehicleAndPed - angleToWeave;
-		while (*pAngleToWeaveLeft < -PI)
+		while (PS3_ANGLE_OK(*pAngleToWeaveLeft) && *pAngleToWeaveLeft < -PI)
 			*pAngleToWeaveLeft += TWOPI;
 	}
 	float diffToRightAngle = LimitRadianAngle(angleBetweenVehicleAndPed - *pAngleToWeaveRight);
 	diffToRightAngle = ABS(diffToRightAngle);
 	if (diffToRightAngle < angleToWeave) {
 		*pAngleToWeaveRight = angleBetweenVehicleAndPed + angleToWeave;
-		while (*pAngleToWeaveRight > PI)
+		while (PS3_ANGLE_OK(*pAngleToWeaveRight) && *pAngleToWeaveRight > PI)
 			*pAngleToWeaveRight -= TWOPI;
 	}
 }
@@ -1458,14 +1458,14 @@ void CCarCtrl::WeaveForObject(CEntity* pOtherEntity, CVehicle* pVehicle, float* 
 	float angleToWeave = lengthToEvade / 2;
 	if (diffToLeftAngle < angleToWeave) {
 		*pAngleToWeaveLeft = angleBetweenVehicleAndObject - angleToWeave;
-		while (*pAngleToWeaveLeft < -PI)
+		while (PS3_ANGLE_OK(*pAngleToWeaveLeft) && *pAngleToWeaveLeft < -PI)
 			*pAngleToWeaveLeft += TWOPI;
 	}
 	float diffToRightAngle = LimitRadianAngle(angleBetweenVehicleAndObject - *pAngleToWeaveRight);
 	diffToRightAngle = ABS(diffToRightAngle);
 	if (diffToRightAngle < angleToWeave) {
 		*pAngleToWeaveRight = angleBetweenVehicleAndObject + angleToWeave;
-		while (*pAngleToWeaveRight > PI)
+		while (PS3_ANGLE_OK(*pAngleToWeaveRight) && *pAngleToWeaveRight > PI)
 			*pAngleToWeaveRight -= TWOPI;
 	}
 }

@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "main.h"
 
@@ -421,6 +424,9 @@ int32
 CPickups::GetActualPickupIndex(int32 index)
 {
 	if (index == -1) return -1;
+#ifdef __PS3__
+	if ((uint16)index >= NUMPICKUPS) return -1;	// a stale or bad handle: not past the array
+#endif
 
 	// doesn't look nice
 	if ((uint16)((index & 0xFFFF0000) >> 16) != aPickUps[(uint16)index].m_nIndex) return -1;
@@ -529,7 +535,12 @@ CPickups::GenerateNewOne(CVector pos, uint32 modelIndex, uint8 type, uint32 quan
 				if (aPickUps[slot].m_eType == PICKUP_ONCE_TIMEOUT) break;
 			}
 
-			if (slot >= NUMGENERALPICKUPS) return -1;
+			if (slot >= NUMGENERALPICKUPS) {
+#ifdef __PS3__
+				PS3_Logf("[pickup] no free pickup slot (%d): model %d not created", NUMGENERALPICKUPS, modelIndex);
+#endif
+				return -1;
+			}
 		}
 	}
 
@@ -813,8 +824,13 @@ CPickups::DoCollectableEffects(CEntity *entity)
 void
 CPickups::RenderPickUpText()
 {
+#ifndef __PS3__
 	wchar *strToPrint;
+#endif
 	for (int32 i = 0; i < NumMessages; i++) {
+#ifdef __PS3__
+		wchar *strToPrint = nil;	// a quantity past 39 left it unset (MSVC: the previous message's)
+#endif
 		if (aMessages[i].m_quantity <= 39) {
 			switch (aMessages[i].m_quantity) // could use some enum maybe
 			{
@@ -976,6 +992,9 @@ CPickups::RenderPickUpText()
 		CFont::SetColor(CRGBA(aMessages[i].m_color.red, aMessages[i].m_color.green, aMessages[i].m_color.blue, aMessages[i].m_color.alpha));
 		CFont::SetBackGroundOnlyTextOff();
 		CFont::SetFontStyle(FONT_BANK);
+#ifdef __PS3__
+		if (strToPrint)
+#endif
 		CFont::PrintString(aMessages[i].m_pos.x, aMessages[i].m_pos.y, strToPrint);
 	}
 	NumMessages = 0;
@@ -1011,9 +1030,12 @@ CPickups::Save(uint8 *buf, uint32 *size)
 INITSAVEBUF
 
 	for (int32 i = 0; i < NUMPICKUPS; i++) {
-		CPickup *buf_pickup = WriteSaveBuf(buf, aPickUps[i]);
+		// converted in a copy: the save buffer is only 4-byte aligned (PS3: 8-byte pointers)
+		CPickup copy = aPickUps[i];
+		CPickup *buf_pickup = &copy;
 		if (buf_pickup->m_eType != PICKUP_NONE && buf_pickup->m_pObject != nil)
-			buf_pickup->m_pObject = (CObject*)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(buf_pickup->m_pObject) + 1);
+			buf_pickup->m_pObject = (CObject*)(uintptr)(CPools::GetObjectPool()->GetJustIndex_NoFreeAssert(buf_pickup->m_pObject) + 1);
+		WriteSaveBuf(buf, copy);
 	}
 
 	WriteSaveBuf(buf, CollectedPickUpIndex);

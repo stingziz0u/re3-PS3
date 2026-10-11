@@ -375,11 +375,11 @@ CPlayerInfo::EvaluateCarPosition(CEntity *carToTest, CPed *player, float carBoun
 	// This dist used for determining the angle to face
 	CVector2D dist(carToTest->GetPosition() - player->GetPosition());
 	float neededTurn = CGeneral::GetATanOfXY(player->GetForward().x, player->GetForward().y) - CGeneral::GetATanOfXY(dist.x, dist.y);
-	while (neededTurn >= PI) {
+	while (PS3_ANGLE_OK(neededTurn) && neededTurn >= PI) {
 		neededTurn -= 2 * PI;
 	}
 
-	while (neededTurn < -PI) {
+	while (PS3_ANGLE_OK(neededTurn) && neededTurn < -PI) {
 		neededTurn += 2 * PI;
 	}
 

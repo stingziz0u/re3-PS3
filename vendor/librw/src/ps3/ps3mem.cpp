@@ -367,6 +367,11 @@ vramAllocSurface(VramAlloc *a, int32 width, int32 height, bool depth, uint32 *pi
 	memset(t, 0, sizeof(*t));
 	if(!rsxTiling || width <= 0 || height <= 0)
 		return false;
+	// small targets (VC's cutscene shadows: 32x32 and 64x64, four per
+	// character) gain nothing from a tile region, and there are only 15:
+	// each one also costs a wait for the RSX and 64 KB of VRAM
+	if(width < 256 || height < 256)
+		return false;
 	uint32 p = gcmGetTiledPitchSize(width*4);
 	if(p == 0 || p < (uint32)width*4)
 		return false;

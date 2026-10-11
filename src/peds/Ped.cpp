@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 #include "main.h"
 #include "Pools.h"
@@ -47,8 +50,8 @@ bool CPed::bPedCheat2;
 bool CPed::bPedCheat3;
 CVector2D CPed::ms_vec2DFleePosition;
 
-void *CPed::operator new(size_t sz) { return CPools::GetPedPool()->New();  }
-void *CPed::operator new(size_t sz, int handle) { return CPools::GetPedPool()->New(handle); }
+void *CPed::operator new(size_t sz) POOL_NEW_NOEXCEPT { return CPools::GetPedPool()->New();  }
+void *CPed::operator new(size_t sz, int handle) POOL_NEW_NOEXCEPT { return CPools::GetPedPool()->New(handle); }
 void CPed::operator delete(void *p, size_t sz) { CPools::GetPedPool()->Delete((CPed*)p); }
 void CPed::operator delete(void *p, int handle) { CPools::GetPedPool()->Delete((CPed*)p); }
 
@@ -149,6 +152,14 @@ CPed::CPed(uint32 pedType) : m_pedIK(this)
 	m_routePointsPassed = 0;
 	m_routeType = 0;
 	m_bodyPartBleeding = -1;
+#ifdef __PS3__
+	// never set here: a reused ped pool slot kept the previous ped's values
+	m_duckTimer = 0;
+	m_panicCounter = 0;
+	m_bloodyFootprintCountOrDeathTime = 0;
+	m_takeAStepAfterAttack = false;
+	m_fightButtonPressure = 0;
+#endif
 
 	m_fMass = 70.0f;
 	m_fTurnMass = 100.0f;
@@ -1689,11 +1700,64 @@ CPed::ProcessBuoyancy(void)
 	}
 }
 
+#ifdef __PS3__
+// is p a live entity of one of the pools?
+static bool
+PS3_EntityLive(const void *p)
+{
+	int idx;
+	bool isFree;
+	if (CPools::GetPedPool()->PS3_Owns(p, &idx, &isFree) ||
+	    CPools::GetVehiclePool()->PS3_Owns(p, &idx, &isFree) ||
+	    CPools::GetObjectPool()->PS3_Owns(p, &idx, &isFree) ||
+	    CPools::GetDummyPool()->PS3_Owns(p, &idx, &isFree) ||
+	    CPools::GetBuildingPool()->PS3_Owns(p, &idx, &isFree) ||
+	    CPools::GetTreadablePool()->PS3_Owns(p, &idx, &isFree))
+		return !isFree;
+	return false;
+}
+
+// A stale pointer to a deleted entity reads old data on PC and the game goes
+// on; here it can kill the game thread (reVC-PS3's Riot crash). Check this
+// ped's entity pointers once per frame: one that doesn't point to a live
+// entity is logged ([ped] stale ...) and cleared.
+static void
+PS3_CheckPedPointers(CPed *ped)
+{
+	static int logged;
+#define PS3_CHECK_PTR(m) \
+	if (ped->m && !PS3_EntityLive(ped->m)) { \
+		if (logged < 24) { \
+			logged++; \
+			PS3_Logf("[ped] stale " #m " %p in ped %p model %d state %d objective %d: cleared", \
+			         (void*)ped->m, ped, ped->GetModelIndex(), ped->m_nPedState, ped->m_objective); \
+		} \
+		ped->m = nil; \
+	}
+	PS3_CHECK_PTR(m_pLookTarget)
+	PS3_CHECK_PTR(m_pedInObjective)
+	PS3_CHECK_PTR(m_carInObjective)
+	PS3_CHECK_PTR(m_pSeekTarget)
+	PS3_CHECK_PTR(m_pMyVehicle)
+	PS3_CHECK_PTR(m_leader)
+	PS3_CHECK_PTR(m_threatEntity)
+	PS3_CHECK_PTR(m_pEventEntity)
+	PS3_CHECK_PTR(m_pCollidingEntity)
+	PS3_CHECK_PTR(m_pCurrentPhysSurface)
+	PS3_CHECK_PTR(m_pDamageEntity)
+#undef PS3_CHECK_PTR
+}
+#endif
+
 void
 CPed::ProcessControl(void)
 {
 	CColPoint foundCol;
 	CEntity *foundEnt = nil;
+
+#ifdef __PS3__
+	PS3_CheckPedPointers(this);
+#endif
 
 	if (m_nZoneLevel > LEVEL_GENERIC && m_nZoneLevel != CCollision::ms_collisionInMemory)
 		return;

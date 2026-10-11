@@ -942,9 +942,9 @@ void CRunningScript::PlayerInAngledAreaCheckCommand(int32 command, uint32* pIp)
 		debug = ScriptParams[6];
 	}
 	float initAngle = CGeneral::GetRadianAngleBetweenPoints(infX, infY, supX, supY) + HALFPI;
-	while (initAngle < 0.0f)
+	while (PS3_ANGLE_OK(initAngle) && initAngle < 0.0f)
 		initAngle += TWOPI;
-	while (initAngle > TWOPI)
+	while (PS3_ANGLE_OK(initAngle) && initAngle > TWOPI)
 		initAngle -= TWOPI;
 	// it looks like the idea is to use a rectangle using the diagonal of the rectangle as
 	// the side of new rectangle, with "length" being the length of second side

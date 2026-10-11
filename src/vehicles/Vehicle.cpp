@@ -29,8 +29,8 @@ bool CVehicle::bAltDodoCheat;
 #endif
 bool CVehicle::m_bDisableMouseSteering = true;
 
-void *CVehicle::operator new(size_t sz) { return CPools::GetVehiclePool()->New();  }
-void *CVehicle::operator new(size_t sz, int handle) { return CPools::GetVehiclePool()->New(handle); }
+void *CVehicle::operator new(size_t sz) POOL_NEW_NOEXCEPT { return CPools::GetVehiclePool()->New();  }
+void *CVehicle::operator new(size_t sz, int handle) POOL_NEW_NOEXCEPT { return CPools::GetVehiclePool()->New(handle); }
 void CVehicle::operator delete(void *p, size_t sz) { CPools::GetVehiclePool()->Delete((CVehicle*)p); }
 void CVehicle::operator delete(void *p, int handle) { CPools::GetVehiclePool()->Delete((CVehicle*)p); }
 

@@ -36,6 +36,7 @@ namespace rw {
 namespace ps3 {
 
 int32 nativeRasterOffset;
+bool dxt1As16 = true;
 RasterStats rasterStats;
 TexProfile texProfile;
 
@@ -339,12 +340,14 @@ allocateTexels(Raster *raster, Ps3Raster *natras)
 	uint32 total = 0;
 	int32 w = raster->width, h = raster->height;
 
+	int32 tb = natras->vramFmt != PS3_VRAM_ARGB8 ? 2 : 4;	// bytes per texel in VRAM
+
 	natras->swizzled = isPow2(w) && isPow2(h);
 	if(!natras->swizzled){
 		// linear: one level, rows padded to 64 bytes
 		natras->numLevels = 1;
 		natras->autogenMipmap = 0;
-		natras->pitch = (w*4 + 63) & ~63;
+		natras->pitch = (w*tb + 63) & ~63;
 		natras->levelOffset[0] = 0;
 		total = natras->pitch*h;
 	}else{
@@ -353,7 +356,7 @@ allocateTexels(Raster *raster, Ps3Raster *natras)
 		natras->pitch = 0;
 		for(int32 i = 0; i < natras->numLevels; i++){
 			natras->levelOffset[i] = total;
-			total += levelDim(w, i)*levelDim(h, i)*4;
+			total += levelDim(w, i)*levelDim(h, i)*tb;
 		}
 	}
 	VramAlloc a;
@@ -463,6 +466,59 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 	if(level >= natras->numLevels || natras->vram == nil)
 		return;
 
+	if(natras->vramFmt != PS3_VRAM_ARGB8){
+		// DXT1 in 16 bits. Level 0 picks the format: A1R5G5B5 if it has a
+		// transparent texel, else R5G6B5 (the levels after it follow)
+		if(level == 0){
+			bool cut = false;
+			for(int32 i = 0; i < w*h && !cut; i++)
+				cut = rgba[i*4+3] < 128;
+			natras->vramFmt = cut ? PS3_VRAM_ARGB1555 : PS3_VRAM_RGB565;
+		}
+		bool a1 = natras->vramFmt == PS3_VRAM_ARGB1555;
+		uint64 t0 = texProfNow();
+		uint32 bytes;
+		if(natras->swizzled){
+			bytes = w*h*2;
+			uint8 *buf = getScratch(bytes + (w+h)*4);
+			if(buf == nil)
+				return;
+			uint16 *pix = (uint16*)buf;
+			uint32 *tx = (uint32*)(buf + ((bytes + 3) & ~3));
+			uint32 *ty = tx + w;
+			swizzleTables(tx, ty, w, h);
+			uint8 *s = rgba;
+			for(int32 y = 0; y < h; y++){
+				uint32 oy = ty[y];
+				for(int32 x = 0; x < w; x++, s += 4)
+					pix[tx[x] | oy] = a1 ? (uint16)((s[3] >= 128 ? 0x8000 : 0) | (s[0]>>3)<<10 | (s[1]>>3)<<5 | s[2]>>3)
+					                     : (uint16)((s[0]>>3)<<11 | (s[1]>>2)<<5 | s[2]>>3);
+			}
+			memcpy(natras->vram + natras->levelOffset[level], pix, bytes);
+			vramFlush(natras->vram + natras->levelOffset[level], bytes);
+		}else{
+			bytes = w*h*2;
+			uint16 *row = (uint16*)getScratch(w*2 + 4);
+			if(row == nil)
+				return;
+			uint8 *s = rgba;
+			for(int32 y = 0; y < h; y++){
+				for(int32 x = 0; x < w; x++, s += 4)
+					row[x] = a1 ? (uint16)((s[3] >= 128 ? 0x8000 : 0) | (s[0]>>3)<<10 | (s[1]>>3)<<5 | s[2]>>3)
+					            : (uint16)((s[0]>>3)<<11 | (s[1]>>2)<<5 | s[2]>>3);
+				memcpy(natras->vram + y*natras->pitch, row, w*2);
+			}
+			vramFlush(natras->vram, natras->pitch*h);
+		}
+		texProfile.us[TEXPROF_SWIZZLE] += texProfNow() - t0;
+		texProfile.levels++;
+		texProfile.texels += w*h;
+		drawStats.texUploadBytes += bytes;
+		natras->validLevels |= 1<<level;
+		textureCacheTouched();
+		return;
+	}
+
 	if(natras->swizzled){
 		uint32 bytes = w*h*4;
 		uint8 *buf = getScratch(bytes + (w+h)*4);
@@ -517,6 +573,31 @@ readbackLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 	int32 w = levelDim(raster->originalWidth, level);
 	int32 h = levelDim(raster->originalHeight, level);
 	uint8 *d = rgba;
+	if(natras->vramFmt != PS3_VRAM_ARGB8){
+		bool a1 = natras->vramFmt == PS3_VRAM_ARGB1555;
+		uint32 *tx = natras->swizzled ? (uint32*)malloc((w+h)*4) : nil;
+		if(natras->swizzled && tx == nil){
+			memset(rgba, 0, w*h*4);
+			return;
+		}
+		uint32 *ty = tx ? tx + w : nil;
+		if(tx)
+			swizzleTables(tx, ty, w, h);
+		for(int32 y = 0; y < h; y++){
+			volatile uint16 *src = natras->swizzled ? (volatile uint16*)(natras->vram + natras->levelOffset[level])
+			                                        : (volatile uint16*)(natras->vram + y*natras->pitch);
+			for(int32 x = 0; x < w; x++, d += 4){
+				uint16 c = natras->swizzled ? src[tx[x] | ty[y]] : src[x];
+				if(a1){
+					d[0] = ((c>>10)&31)<<3; d[1] = ((c>>5)&31)<<3; d[2] = (c&31)<<3; d[3] = c & 0x8000 ? 255 : 0;
+				}else{
+					d[0] = ((c>>11)&31)<<3; d[1] = ((c>>5)&63)<<2; d[2] = (c&31)<<3; d[3] = 255;
+				}
+			}
+		}
+		free(tx);
+		return;
+	}
 	if(natras->swizzled){
 		uint32 *tx = (uint32*)malloc((w+h)*4);
 		if(tx == nil){
@@ -684,12 +765,16 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 		return;
 	}
 	memset(tex, 0, sizeof(*tex));
-	tex->format = GCM_TEXTURE_FORMAT_A8R8G8B8 |
+	tex->format = (natras->vramFmt == PS3_VRAM_RGB565 ? GCM_TEXTURE_FORMAT_R5G6B5 :
+	               natras->vramFmt == PS3_VRAM_ARGB1555 ? GCM_TEXTURE_FORMAT_A1R5G5B5 :
+	               GCM_TEXTURE_FORMAT_A8R8G8B8) |
 		(natras->swizzled ? GCM_TEXTURE_FORMAT_SWZ : GCM_TEXTURE_FORMAT_LIN);
 	tex->mipmap = n;
 	tex->dimension = GCM_TEXTURE_DIMS_2D;
 	tex->cubemap = GCM_FALSE;
 	tex->remap = 0x00AAE4;	// identity (ps3gl)
+	if(natras->vramFmt == PS3_VRAM_RGB565)
+		tex->remap = 0x00A9E4;	// alpha: ONE (type A, bits 8-9 = 1), colours as they are
 	tex->width = raster->parent->originalWidth;
 	tex->height = raster->parent->originalHeight;
 	tex->depth = 1;
@@ -730,6 +815,8 @@ rasterCrc(Raster *raster)
 		return 0;
 	uint32 words = natras->swizzled ? raster->parent->originalWidth*raster->parent->originalHeight
 	                                : natras->pitch*raster->parent->originalHeight/4;
+	if(natras->vramFmt != PS3_VRAM_ARGB8 && natras->swizzled)
+		words /= 2;
 	volatile uint32 *p = (volatile uint32*)natras->vram;
 	uint32 h = 2166136261u;
 	for(uint32 i = 0; i < words; i += 61)
@@ -1081,6 +1168,11 @@ allocateDXT(Raster *raster, int32 dxt, int32 numLevels, bool32 hasAlpha)
 		natras->numLevels = numLevels;
 	// no CPU mipmap generation for DXT: use what the TXD has
 	natras->autogenMipmap = 0;
+#ifdef RW_PS3_RSX
+	// DXT1: 16 bits in VRAM (level 0's upload picks 565 or 1555)
+	if(dxt == 1 && dxt1As16 && !hasStorage(natras))
+		natras->vramFmt = PS3_VRAM_ARGB1555;
+#endif
 
 	if(!hasStorage(natras))
 		allocateTexels(raster, natras);
@@ -1099,6 +1191,7 @@ rasterCreate(Raster *raster)
 	natras->hasAlpha = 0;
 	natras->numLevels = 1;
 	natras->texFormat = PS3_TEX_NONE;
+	natras->vramFmt = PS3_VRAM_ARGB8;
 	natras->lockedLevel = -1;
 
 	Raster *ret = raster;

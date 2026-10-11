@@ -5277,6 +5277,11 @@ bool
 CPed::PositionPedOutOfCollision(void)
 {
 	CVehicle *veh;
+#ifdef __PS3__
+	// veh ended up as the last test's result, maybe nil, not the vehicle
+	// next to posNearVeh
+	CVehicle *vehNear = nil;
+#endif
 	CVector posNearVeh;
 	CVector posSomewhereClose;
 	bool putNearVeh = false;
@@ -5311,6 +5316,9 @@ CPed::PositionPedOutOfCollision(void)
 				if (veh) {
 					if (potentialChangeSqr < smallestDistNearVeh) {
 						posNearVeh = potentialPos;
+#ifdef __PS3__
+						vehNear = veh;
+#endif
 						putNearVeh = true;
 						smallestDistNearVeh = potentialChangeSqr;
 					}
@@ -5332,6 +5340,11 @@ CPed::PositionPedOutOfCollision(void)
 	if (putSomewhereClose) {
 		SetPosition(posSomewhereClose);
 	} else {
+#ifdef __PS3__
+		veh = vehNear;
+		if (veh == nil)
+			return false;
+#endif
 		CVector vehSize = veh->GetModelInfo()->GetColModel()->boundingBox.max;
 		posNearVeh.z += vehSize.z;
 		SetPosition(posNearVeh);

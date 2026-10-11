@@ -382,12 +382,15 @@ INITSAVEBUF
 #else
 	for (int phoneId = 0; phoneId < NUMPHONES; phoneId++) {
 #endif
-		CPhone* phone = WriteSaveBuf(buf, m_aPhones[phoneId]);
+		// converted in a copy: the save buffer is only 4-byte aligned (PS3: 8-byte pointers)
+		CPhone copy = m_aPhones[phoneId];
+		CPhone* phone = &copy;
 
 		// Convert entity pointer to building pool index while saving
 		if (phone->m_pEntity) {
-			phone->m_pEntity = (CEntity*) (CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert((CBuilding*)phone->m_pEntity) + 1);
+			phone->m_pEntity = (CEntity*)(uintptr)(CPools::GetBuildingPool()->GetJustIndex_NoFreeAssert((CBuilding*)phone->m_pEntity) + 1);
 		}
+		WriteSaveBuf(buf, copy);
 	}
 VALIDATESAVEBUF(*size)
 }

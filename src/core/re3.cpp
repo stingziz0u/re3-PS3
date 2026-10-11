@@ -398,7 +398,7 @@ void LoadINIControllerSettings()
 				if (contType == -1)
 					continue;
 
-				int contKey;
+				int contKey = -1;
 				if (contType == JOYSTICK) {
 					char *temp;
 					contKey = strtol(binding, &temp, 0);
@@ -425,6 +425,8 @@ void LoadINIControllerSettings()
 					}
 				}
 				
+				if (contKey == -1)
+					continue;	// a binding name not in the tables: was an unset key
 				ControlsManager.SetControllerKeyAssociatedWithAction((e_ControllerAction)i, contKey, (eControllerType)contType);
 			}
 		}

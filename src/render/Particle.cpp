@@ -2,6 +2,9 @@
 
 #include "General.h"
 #include "Timer.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 #include "TxdStore.h"
 #include "Entity.h"
 #include "Sprite.h"
@@ -823,6 +826,21 @@ CParticle *CParticle::AddParticle(tParticleType type, CVector const &vecPos, CVe
 	{
 		return nil;
 	}
+#elif defined __PS3__
+	// these are added every frame, made for the 30 fps of the PS2 version:
+	// at 60 fps keep 1 in 2, the same number per second
+	if ( ( type == PARTICLE_ENGINE_SMOKE
+		|| type == PARTICLE_ENGINE_SMOKE2
+		|| type == PARTICLE_ENGINE_STEAM
+		|| type == PARTICLE_CARFLAME_SMOKE
+		|| type == PARTICLE_RUBBER_SMOKE
+		|| type == PARTICLE_BURNINGRUBBER_SMOKE
+		|| type == PARTICLE_EXHAUST_FUMES
+		|| type == PARTICLE_CARCOLLISION_DUST )
+		&& CTimer::GetTimeStep() < 0.75f && (CTimer::GetFrameCounter() & 1) )
+	{
+		return nil;
+	}
 #endif
 
 	CParticle *pParticle = m_pUnusedListHead;
@@ -1477,6 +1495,44 @@ void CParticle::Update()
 }
 
 #ifdef __PS3__
+// How many rasters the frame table of a particle type has. particle.cfg can
+// animate a type past the end of its table: on PC the read hit the next
+// global, which the original layout made another raster table. GCC lays
+// globals out its own way, so the read can get any pointer (or a texture,
+// not a raster) and the RSX code dies on it (reVC-PS3: Treacherous Swine).
+// The frame is kept inside the table instead ([particle] line, once per type).
+static int
+PS3_ParticleFrameCount(RwRaster **frames)
+{
+	static const struct { RwRaster **table; int count; } tables[] = {
+		{ gpSmokeRaster, MAX_SMOKE_FILES }, { gpSmoke2Raster, MAX_SMOKE2_FILES },
+		{ gpRubberRaster, MAX_RUBBER_FILES }, { gpRainSplashRaster, MAX_RAINSPLASH_FILES },
+		{ gpWatersprayRaster, MAX_WATERSPRAY_FILES }, { gpExplosionMediumRaster, MAX_EXPLOSIONMEDIUM_FILES },
+		{ gpGunFlashRaster, MAX_GUNFLASH_FILES }, { gpRainSplashupRaster, MAX_RAINSPLASHUP_FILES },
+		{ gpBirdfrontRaster, MAX_BIRDFRONT_FILES }, { gpCarDebrisRaster, MAX_CARDEBRIS_FILES },
+		{ gpCarSplashRaster, MAX_CARSPLASH_FILES }, { gpRainDropRaster, MAX_RAINDROP_FILES },
+	};
+	for (int i = 0; i < ARRAY_SIZE(tables); i++)
+		if (tables[i].table == frames)
+			return tables[i].count;
+	return 1;	// &gpFlame1Raster and the other single rasters
+}
+
+static void
+PS3_ParticleFrameClamp(CParticle *particle, int type, RwRaster **frames)
+{
+	static uint8 logged[MAX_PARTICLES];
+	int count = PS3_ParticleFrameCount(frames);
+	if (particle->m_nCurrentFrame < count)
+		return;
+	if (!logged[type]) {
+		logged[type] = 1;
+		PS3_Logf("[particle] type %d at frame %d of a %d-raster table: kept at the last one",
+		         type, particle->m_nCurrentFrame, count);
+	}
+	particle->m_nCurrentFrame = count - 1;
+}
+
 extern int32 gPS3FxOff;
 #endif
 void CParticle::Render()
@@ -1571,6 +1627,9 @@ void CParticle::Render()
 #endif
 			if ( canDraw && psystem->m_nFinalAnimationFrame != 0 && frames != nil )
 			{
+#ifdef __PS3__
+				PS3_ParticleFrameClamp(particle, i, frames);
+#endif
 				RwRaster *curFrame = frames[particle->m_nCurrentFrame];
 				if ( prevFrame != curFrame )
 				{

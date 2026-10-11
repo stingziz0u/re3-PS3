@@ -193,8 +193,8 @@ public:
 	float m_fSteerInput;
 	eVehicleType m_vehType;
 
-	static void *operator new(size_t);
-	static void *operator new(size_t sz, int slot);
+	static void *operator new(size_t) POOL_NEW_NOEXCEPT;
+	static void *operator new(size_t sz, int slot) POOL_NEW_NOEXCEPT;
 	static void operator delete(void*, size_t);
 	static void operator delete(void*, int);
 

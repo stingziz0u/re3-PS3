@@ -655,10 +655,13 @@ CTheZones::SaveAllZones(uint8 *buffer, uint32 *size)
 	WriteSaveBuf(buffer, (int16)0); // padding
 
 	for(i = 0; i < ARRAY_SIZE(ZoneArray); i++){
-		CZone *zone = WriteSaveBuf(buffer, ZoneArray[i]);
-		zone->child = (CZone*)GetIndexForZonePointer(ZoneArray[i].child);
-		zone->parent = (CZone*)GetIndexForZonePointer(ZoneArray[i].parent);
-		zone->next = (CZone*)GetIndexForZonePointer(ZoneArray[i].next);
+		// converted in a copy: the save buffer is only 4-byte aligned (PS3: 8-byte pointers)
+		CZone copy = ZoneArray[i];
+		CZone *zone = &copy;
+		zone->child = (CZone*)(uintptr)GetIndexForZonePointer(ZoneArray[i].child);
+		zone->parent = (CZone*)(uintptr)GetIndexForZonePointer(ZoneArray[i].parent);
+		zone->next = (CZone*)(uintptr)GetIndexForZonePointer(ZoneArray[i].next);
+		WriteSaveBuf(buffer, copy);
 	}
 
 	for(i = 0; i < ARRAY_SIZE(ZoneInfoArray); i++)
@@ -668,7 +671,9 @@ CTheZones::SaveAllZones(uint8 *buffer, uint32 *size)
 	WriteSaveBuf(buffer, TotalNumberOfZoneInfos);
 
 	for(i = 0; i < ARRAY_SIZE(MapZoneArray); i++) {
-		CZone* zone = WriteSaveBuf(buffer, MapZoneArray[i]);
+		// converted in a copy: the save buffer is only 4-byte aligned (PS3: 8-byte pointers)
+		CZone copy = MapZoneArray[i];
+		CZone *zone = &copy;
 
 		/*
 		The call of GetIndexForZonePointer is wrong, as it is
@@ -678,9 +683,10 @@ CTheZones::SaveAllZones(uint8 *buffer, uint32 *size)
 		assert(MapZoneArray[i].child == nil);
 		assert(MapZoneArray[i].parent == nil);
 		assert(MapZoneArray[i].next == nil);
-		zone->child = (CZone*)GetIndexForZonePointer(MapZoneArray[i].child);
-		zone->parent = (CZone*)GetIndexForZonePointer(MapZoneArray[i].parent);
-		zone->next = (CZone*)GetIndexForZonePointer(MapZoneArray[i].next);
+		zone->child = (CZone*)(uintptr)GetIndexForZonePointer(MapZoneArray[i].child);
+		zone->parent = (CZone*)(uintptr)GetIndexForZonePointer(MapZoneArray[i].parent);
+		zone->next = (CZone*)(uintptr)GetIndexForZonePointer(MapZoneArray[i].next);
+		WriteSaveBuf(buffer, copy);
 	}
 
 	for(i = 0; i < ARRAY_SIZE(AudioZoneArray); i++)
