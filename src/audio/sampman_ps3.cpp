@@ -729,6 +729,12 @@ static uint8 monoMode;
 
 static float mixBuf[AUDIO_BLOCK_SAMPLES*OUT_CHANNELS];
 
+// a channel MixChannel stopped (frequency or position gone wild)
+static int s_badChannelLog, s_badChannelsLogged;
+static uint32 s_badFreq;
+static double s_badPos;
+static int32 s_badLen;
+
 static void
 MixChannel(Channel &c)
 {
@@ -768,11 +774,14 @@ MixChannel(Channel &c)
 	float *out = mixBuf;
 	if(!(step > 0.0 && step < 16.0) || !(pos >= 0.0 && pos < 1.0e9)){
 		// a frequency or position gone wild (a NaN of the game's maths):
-		// the channel stops instead of reading outside its sample
-		static int logged;
-		if(logged < 8){
-			logged++;
-			PS3_Logf("[audio] channel stopped: frequency %u, position %.0f of %d", c.freq, pos, len);
+		// the channel stops instead of reading outside its sample (logged
+		// by AudioFill, out of the mixer lock: no file writing while the
+		// game thread may be waiting for it)
+		if(s_badChannelLog == 0){
+			s_badFreq = c.freq;
+			s_badPos = pos;
+			s_badLen = len;
+			s_badChannelLog = 1;
 		}
 		c.playing = false;
 		return;
@@ -865,6 +874,13 @@ AudioFill(float *dst)
 		s_mixing = 0;
 	}
 	s_mixBlocks++;
+	if(s_badChannelLog){
+		if(s_badChannelsLogged < 8){
+			s_badChannelsLogged++;
+			PS3_Logf("[audio] channel stopped: frequency %u, position %.0f of %d", s_badFreq, s_badPos, s_badLen);
+		}
+		s_badChannelLog = 0;
+	}
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
 		float v = mixBuf[i];
 		if(v > 1.0f) v = 1.0f;
@@ -916,12 +932,16 @@ StreamThread(void *arg)
 		PedCommentRead();
 		s_streamStep = 2;
 		{
-			StreamLock slock;
 			for(int i = 0; i < MAX_STREAMS; i++){
-				Stream *s = streams[i];
-				if(s == nil || s->eof)
-					continue;
 				for(int pass = 0; pass < 8; pass++){
+					// the lock per chunk (a 16 KB read and its decode), not for
+					// every stream's 8 chunks: a stream change of the game thread
+					// (MusicManager, inside DMAudio.Service) waited for all of
+					// that, disk reads included
+					StreamLock slock;
+					Stream *s = streams[i];
+					if(s == nil || s->eof)
+						break;
 					uint32 used = s->head - s->tail;
 					uint32 space = RING_FRAMES - 1 - used;
 					if(space < 4096)
@@ -1513,11 +1533,19 @@ static void
 ReplaceStream(uint8 nStream, Stream *s)
 {
 	Stream *old;
+	uint64 t0 = sysGetSystemTime();
 	{
 		StreamLock slock;
 		MixLock lock;
 		old = streams[nStream];
 		streams[nStream] = s;
+	}
+	// the game thread (MusicManager) waiting for the stream thread
+	uint32 waited = (uint32)(sysGetSystemTime() - t0) / 1000;
+	static int logged;
+	if(waited >= 30 && logged < 16){
+		logged++;
+		PS3_Logf("[audio] stream %d change waited %u ms for the stream thread", nStream, waited);
 	}
 	StreamDestroy(old);
 }
