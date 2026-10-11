@@ -236,6 +236,7 @@ struct Crumb {
 static Crumb crumbs[CRUMB_COUNT];
 // set by the game (Ped.cpp): prints the entity being processed at the crash
 void (*PS3_crashDumpHook)(void);
+void (*PS3_hangDumpHook)(void);	// more for the [hang] dump (sampman_ps3.cpp: the audio threads)
 static volatile unsigned crumbHead;
 unsigned PS3_crumbFrame;
 
@@ -491,6 +492,8 @@ PS3_WatchdogThread(void *arg)
 			reported = 1;
 			PS3_Logf("[hang] no frame for %u s (stuck in frame %u); what the game thread was doing:", still, f);
 			PS3_DumpCrumbs();
+			if (PS3_hangDumpHook)
+				PS3_hangDumpHook();
 			PS3_LogSync();
 		}
 	}

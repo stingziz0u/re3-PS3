@@ -170,7 +170,7 @@ ELF := $(OBJDIR)/$(TARGET).elf
 # dumps them when the game thread dies). The small math/entity/list helpers
 # are left out. It costs a little CPU on every call, so the release is
 # built without it; the crumbs stay in both.
-FTRACE_DIRS := peds weapons collision render/Shadows render/Particle core/World \
+FTRACE_DIRS := audio vehicles peds weapons collision render/Shadows render/Particle core/World \
   render/Hud core/Radar render/Font render/Sprite2d render/SpecialFX text/Messages \
   control/Darkel control/Pickups control/Garages animation/AnimManager \
   animation/RpAnimBlend animation/AnimBlendAssociation animation/AnimBlendClumpData \

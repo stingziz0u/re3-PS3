@@ -64,6 +64,16 @@ static uintptr nSampleBankMemoryStartAddress[MAX_SFX_BANKS];
 
 static int32 nPedSlotSfx[MAX_PEDSFX];
 static uint8 nCurrentPedSlot;
+// Ped comments are read by the stream thread (its own handle on sfx.raw):
+// a seek and up to 79 KB from the disk the streaming also reads took the
+// game thread 10-40 ms each time a ped spoke. The slot's sample is set
+// when the read is done; IsPedCommentLoaded says no until then (the game
+// asks again the next frame).
+static FILE *fpPedCommentHandle;
+static volatile int32 pcRequest = -1;	// comment being read (-1: none)
+static volatile int32 pcSlot;
+static volatile uint32 pcOffset, pcSize;	// in sfx.raw
+static void PedCommentRead(void);
 
 static uint8 nChannelVolume[MAXCHANNELS+MAX2DCHANNELS];
 static uint32 nStreamLength[TOTAL_STREAMED_SOUNDS];
@@ -96,12 +106,40 @@ CreateMutex(sys_mutex_t *m, const char *name)
 	sysMutexCreate(m, &attr);
 }
 
+// what the audio threads are doing, for the [hang] dump (a freeze inside
+// DMAudio.Service after a bike crash: patch 30)
+static volatile uint32 s_mixBlocks;	// blocks mixed
+static volatile int s_mixing;		// the mixer holds the lock
+static volatile uint32 s_streamPasses;	// stream thread loops
+static volatile int s_streamStep;	// where the stream thread is (see StreamThread)
+
 struct MixLock {
-	MixLock() { sysMutexLock(mixMutex, 0); }
+	MixLock() {
+		// 2 s without it is a hang: say so, then go on waiting
+		if(sysMutexLock(mixMutex, 2000000) != 0){
+			static int logged;
+			if(logged < 4){
+				logged++;
+				PS3_Logf("[audio] 2 s waiting for the mixer lock (blocks mixed %u, in the mixer %d, stream thread step %d passes %u)",
+				         s_mixBlocks, s_mixing, s_streamStep, s_streamPasses);
+			}
+			sysMutexLock(mixMutex, 0);
+		}
+	}
 	~MixLock() { sysMutexUnlock(mixMutex); }
 };
 struct StreamLock {
-	StreamLock() { sysMutexLock(streamMutex, 0); }
+	StreamLock() {
+		if(sysMutexLock(streamMutex, 2000000) != 0){
+			static int logged;
+			if(logged < 4){
+				logged++;
+				PS3_Logf("[audio] 2 s waiting for the stream lock (stream thread step %d passes %u)",
+				         s_streamStep, s_streamPasses);
+			}
+			sysMutexLock(streamMutex, 0);
+		}
+	}
 	~StreamLock() { sysMutexUnlock(streamMutex); }
 };
 
@@ -728,6 +766,19 @@ MixChannel(Channel &c)
 	const int16 *data = c.data;
 	int32 len = c.length;
 	float *out = mixBuf;
+	if(!(step > 0.0 && step < 16.0) || !(pos >= 0.0 && pos < 1.0e9)){
+		// a frequency or position gone wild (a NaN of the game's maths):
+		// the channel stops instead of reading outside its sample
+		static int logged;
+		if(logged < 8){
+			logged++;
+			PS3_Logf("[audio] channel stopped: frequency %u, position %.0f of %d", c.freq, pos, len);
+		}
+		c.playing = false;
+		return;
+	}
+	if(!(gl == gl) || !(gr == gr))
+		gl = gr = 0.0f;	// NaN position or volume: silent, not noise
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
 		int32 end = (c.loopEnd < 0 || c.loopEnd > len) ? len : c.loopEnd;
 		bool looping = c.loopCount == 0 || c.timesPlayed + 1 < c.loopCount;
@@ -744,6 +795,10 @@ MixChannel(Channel &c)
 			}
 		}
 		int32 i0 = (int32)pos;
+		if(i0 < 0 || i0 >= len){
+			c.playing = false;
+			break;
+		}
 		float t = (float)(pos - i0);
 		int32 i1 = i0 + 1 < len ? i0 + 1 : i0;
 		float s = data[i0] + (data[i1] - data[i0]) * t;
@@ -800,13 +855,16 @@ AudioFill(float *dst)
 	memset(mixBuf, 0, sizeof(mixBuf));
 	{
 		MixLock lock;
+		s_mixing = 1;
 		for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
 			if(channels[i].playing)
 				MixChannel(channels[i]);
 		for(int i = 0; i < MAX_STREAMS; i++)
 			if(streams[i])
 				MixStream(*streams[i]);
+		s_mixing = 0;
 	}
+	s_mixBlocks++;
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
 		float v = mixBuf[i];
 		if(v > 1.0f) v = 1.0f;
@@ -853,6 +911,10 @@ StreamThread(void *arg)
 	static int16 tmp[4096*2];
 	(void)arg;
 	while(!s_audioQuit){
+		s_streamPasses++;
+		s_streamStep = 1;
+		PedCommentRead();
+		s_streamStep = 2;
 		{
 			StreamLock slock;
 			for(int i = 0; i < MAX_STREAMS; i++){
@@ -880,14 +942,44 @@ StreamThread(void *arg)
 				}
 			}
 		}
-		usleep(8000);
+		s_streamStep = 3;
+		// sooner when a ped comment waits
+		for(int w = 0; w < 4 && pcRequest < 0 && !s_audioQuit; w++)
+			usleep(2000);
+		s_streamStep = 0;
 	}
 	sysThreadExit(0);
+}
+
+// [hang] dump (ps3_log.cpp's watchdog): are the audio threads alive?
+extern void (*PS3_hangDumpHook)(void);
+extern int32 PS3_audioEntity, PS3_audioEntityType;	// AudioLogic.cpp
+static void
+AudioHangDump(void)
+{
+	PS3_Logf("[hang] audio: last entity processed %d (audio type %d)", PS3_audioEntity, PS3_audioEntityType);
+	uint32 blocks = s_mixBlocks, passes = s_streamPasses;
+	usleep(100000);
+	int playing = 0;
+	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
+		if(channels[i].playing)
+			playing++;
+	PS3_Logf("[hang] audio: mixer %u blocks in 0.1 s (in the mixer %d), stream thread %u passes (step %d), "
+	         "ped comment read %d, channels playing %d",
+	         s_mixBlocks - blocks, s_mixing, s_streamPasses - passes, s_streamStep, (int)pcRequest, playing);
+	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++){
+		Channel &c = channels[i];
+		if(c.playing)
+			PS3_Logf("[hang]   channel %d: freq %u pos %.0f of %d loop %d-%d count %u/%u 3d %d (%.1f %.1f %.1f) vol %u",
+			         i, c.freq, c.pos, c.length, (int)c.loopStart, (int)c.loopEnd, (unsigned)c.timesPlayed,
+			         (unsigned)c.loopCount, (int)c.is3D, c.x, c.y, c.z, (unsigned)c.volume);
+	}
 }
 
 static bool
 AudioPortInit(void)
 {
+	PS3_hangDumpHook = AudioHangDump;
 	audioPortParam param;
 	s32 r;
 
@@ -1108,6 +1200,10 @@ cSampleManager::Terminate(void)
 		for(int32 i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
 			channels[i].playing = false;
 	}
+	if(fpPedCommentHandle){
+		fclose(fpPedCommentHandle);
+		fpPedCommentHandle = nil;
+	}
 	if(fpSampleDataHandle){
 		fclose(fpSampleDataHandle);
 		fpSampleDataHandle = nil;
@@ -1204,11 +1300,10 @@ cSampleManager::LoadPedComment(uint32 nComment)
 			break;
 		}
 	}
-	if(fpSampleDataHandle == nil || nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] == 0)
+	if(fpPedCommentHandle == nil || nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] == 0)
 		return false;
-	uint32 size = m_aSamples[nComment].nSize;
-	if(size > PED_BLOCKSIZE)
-		size = PED_BLOCKSIZE;
+	if(pcRequest >= 0)
+		return false;	// one at a time: the next frame
 	{
 		// the slot may be playing on a channel: stop those first
 		MixLock lock;
@@ -1218,16 +1313,36 @@ cSampleManager::LoadPedComment(uint32 nComment)
 			   (const uint8*)channels[i].data < slotStart + PED_BLOCKSIZE)
 				channels[i].playing = false;
 	}
-	if(fseek(fpSampleDataHandle, m_aSamples[nComment].nOffset, SEEK_SET) != 0)
-		return false;
-	void *dst = (void*)(nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE*nCurrentPedSlot);
-	if(fread(dst, 1, size, fpSampleDataHandle) != size)
-		return false;
-	LittleSwap16(dst, size/2);
-	nPedSlotSfx[nCurrentPedSlot] = nComment;
+	nPedSlotSfx[nCurrentPedSlot] = NO_SAMPLE;
+	pcSlot = nCurrentPedSlot;
+	pcOffset = m_aSamples[nComment].nOffset;
+	pcSize = m_aSamples[nComment].nSize < PED_BLOCKSIZE ? m_aSamples[nComment].nSize : PED_BLOCKSIZE;
 	if(++nCurrentPedSlot >= MAX_PEDSFX)
 		nCurrentPedSlot = 0;
+	__asm__ volatile("lwsync" ::: "memory");
+	pcRequest = nComment;	// the stream thread reads it (PedCommentRead)
 	return true;
+}
+
+// stream thread
+static void
+PedCommentRead(void)
+{
+	int32 nComment = pcRequest;
+	if(nComment < 0)
+		return;
+	__asm__ volatile("lwsync" ::: "memory");
+	int32 slot = pcSlot;
+	uint32 size = pcSize;
+	void *dst = (void*)(nSampleBankMemoryStartAddress[SFX_BANK_PED_COMMENTS] + PED_BLOCKSIZE*slot);
+	if(fseek(fpPedCommentHandle, pcOffset, SEEK_SET) == 0 &&
+	   fread(dst, 1, size, fpPedCommentHandle) == size){
+		LittleSwap16(dst, size/2);
+		__asm__ volatile("lwsync" ::: "memory");
+		nPedSlotSfx[slot] = nComment;
+	}
+	__asm__ volatile("lwsync" ::: "memory");
+	pcRequest = -1;
 }
 
 int32
@@ -1588,6 +1703,7 @@ cSampleManager::InitialiseSampleBanks(void)
 		fpSampleDescHandle = nil;
 		return false;
 	}
+	fpPedCommentHandle = fopen(SampleBankDataFilename, "rb");
 	fseek(fpSampleDataHandle, 0, SEEK_END);
 	int32 _nSampleDataEndOffset = ftell(fpSampleDataHandle);
 	rewind(fpSampleDataHandle);

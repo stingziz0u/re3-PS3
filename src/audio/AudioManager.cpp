@@ -113,9 +113,12 @@ cAudioManager::Service()
 	if (m_bIsInitialised) {
 		m_nPreviousUserPause = m_nUserPause;
 		m_nUserPause = CTimer::GetIsUserPaused();
+		PS3_CRUMB("audio: UpdateReflections", 0);
 		UpdateReflections();
 		ServiceSoundEffects();
+		PS3_CRUMB("audio: MusicManager.Service", 0);
 		MusicManager.Service();
+		PS3_CRUMB("audio: done", 0);
 	}
 }
 
@@ -445,18 +448,27 @@ cAudioManager::ServiceSoundEffects()
 		ClearActiveSamples();
 	}
 	m_nActiveSampleQueue = m_nActiveSampleQueue == 1 ? 0 : 1;
+	PS3_CRUMB("audio: ProcessReverb", 0);
 	ProcessReverb();
+	PS3_CRUMB("audio: ProcessSpecial", 0);
 	ProcessSpecial();
 	ClearRequestedQueue();
+	PS3_CRUMB("audio: InterrogateAudioEntities", 0);
 	InterrogateAudioEntities();
+	PS3_CRUMB("audio: PedComments", 0);
 	m_sPedComments.Process();
+	PS3_CRUMB("audio: ServicePoliceRadio", 0);
 	ServicePoliceRadio();
+	PS3_CRUMB("audio: ServiceCollisions", 0);
 	ServiceCollisions();
+	PS3_CRUMB("audio: AddReleasingSounds", 0);
 	AddReleasingSounds();
+	PS3_CRUMB("audio: ProcessMissionAudio", 0);
 	ProcessMissionAudio();
 #ifdef GTA_PC
 	AdjustSamplesVolume();
 #endif
+	PS3_CRUMB("audio: ProcessActiveQueues", 0);
 	ProcessActiveQueues();
 #if defined(AUDIO_OAL) || defined(AUDIO_PS3)
 	SampleManager.Service();

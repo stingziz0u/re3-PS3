@@ -283,9 +283,18 @@ cAudioManager::ProcessSpecial()
 	}
 }
 
+#ifdef __PS3__
+// the entity the audio is on (sampman_ps3.cpp's [hang] dump)
+int32 PS3_audioEntity = -1, PS3_audioEntityType = -1;
+#endif
+
 void
 cAudioManager::ProcessEntity(int32 id)
 {
+#ifdef __PS3__
+	PS3_audioEntity = id;
+	PS3_audioEntityType = m_asAudioEntities[id].m_nType;
+#endif
 	if (m_asAudioEntities[id].m_bStatus) {
 		m_sQueueSample.m_nEntityIndex = id;
 		switch (m_asAudioEntities[id].m_nType) {
