@@ -1,0 +1,22 @@
+// rw_fxaa.vcg -- the FXAA pass (graphics menu ANTIALIASING): a quad over the
+// picture in pixel coordinates (as Im2D), the texture coordinates of the
+// four corners of each pixel for rw_fxaa.fcg
+#include "common.cgh"
+
+uniform float4 u_fxaa : C14;	// 1/width, 1/height of the picture
+
+void main(float4 in_pos  : ATTR0,
+          float2 in_tex0 : ATTR8,
+          out float4 o_pos    : POSITION,
+          out float2 o_tex0   : TEXCOORD0,
+          out float4 o_posPos : TEXCOORD1,
+          out float4 o_rcp1   : TEXCOORD3,
+          out float4 o_rcp2   : TEXCOORD4)
+{
+	o_pos = float4(in_pos.xy * u_xform.xy + u_xform.zw, 0.0, 1.0);
+	o_tex0 = in_tex0;
+	float2 h = 0.5 * u_fxaa.xy;
+	o_posPos = float4(in_tex0 - h, in_tex0 + h);
+	o_rcp1 = float4(-h, h);
+	o_rcp2 = float4(-2.0 * u_fxaa.xy, 2.0 * u_fxaa.xy);
+}

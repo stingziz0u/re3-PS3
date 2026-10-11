@@ -362,7 +362,7 @@ zcullActive(void)
 }
 
 bool
-vramAllocSurface(VramAlloc *a, int32 width, int32 height, bool depth, uint32 *pitch, SurfaceTiles *t, bool plain)
+vramAllocSurface(VramAlloc *a, int32 width, int32 height, bool depth, uint32 *pitch, SurfaceTiles *t)
 {
 	memset(t, 0, sizeof(*t));
 	if(!rsxTiling || width <= 0 || height <= 0)
@@ -391,7 +391,7 @@ vramAllocSurface(VramAlloc *a, int32 width, int32 height, bool depth, uint32 *pi
 
 	// nothing in flight may touch the region while its layout changes
 	rsxFinishAll();
-	bool comp = depth && !zcompUsed && !plain;
+	bool comp = depth && !zcompUsed;
 	s32 r = gcmSetTileInfo(idx, GCM_LOCATION_RSX, off, size, p,
 	                       comp ? GCM_COMPMODE_Z32_SEPSTENCIL : GCM_COMPMODE_DISABLED, 0, depth ? 2 : 0);
 	if(r == 0)
@@ -408,7 +408,7 @@ vramAllocSurface(VramAlloc *a, int32 width, int32 height, bool depth, uint32 *pi
 		zcompUsed = true;
 		t->zcomp = true;
 	}
-	if(depth && !zcullUsed && !plain){
+	if(depth && !zcullUsed){
 		gcmSetZcull(0, off, (width+63) & ~63, (height+63) & ~63, 0, GCM_ZCULL_Z24S8, GCM_SURFACE_CENTER_1,
 		            GCM_ZCULL_LESS, GCM_ZCULL_LONES, GCM_SCULL_SFUNC_LESS, 1, 0xff);
 		zcullUsed = true;

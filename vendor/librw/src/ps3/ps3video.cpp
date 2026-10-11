@@ -565,62 +565,6 @@ logStats(void)
 	statWaitUs = statCpuUs = 0;
 }
 
-// Scaled transfer of a multisampled picture (its samples side by side, in
-// = the samples) into an A8R8G8B8 surface: bilinear, pixel centres, so a
-// scale down by 2 averages each pixel's samples. Wider than 2048: in two
-// halves, kept under the scaler's limit.
-static void
-scaleSamples(u32 srcOff, u32 srcPitch, int inW, int inH,
-             u32 dstOff, u32 dstPitch, int outX, int outY, int outW, int outH)
-{
-	gcmTransferScale scale;
-	gcmTransferSurface surface;
-
-	memset(&surface, 0, sizeof(surface));
-	surface.format = GCM_TRANSFER_SURFACE_FORMAT_A8R8G8B8;
-	surface.pitch = dstPitch;
-	surface.offset = dstOff;
-
-	int parts = inW > 2048 && (outW & 1) == 0 && (inW & 1) == 0 ? 2 : 1;
-	for(int p = 0; p < parts; p++){
-		int ix = inW*p/parts, iw = inW*(p+1)/parts - ix;
-		int ox = outW*p/parts, ow = outW*(p+1)/parts - ox;
-		memset(&scale, 0, sizeof(scale));
-		scale.conversion = GCM_TRANSFER_CONVERSION_TRUNCATE;
-		scale.format = GCM_TRANSFER_SCALE_FORMAT_A8R8G8B8;
-		scale.operation = GCM_TRANSFER_OPERATION_SRCCOPY;
-		scale.clipX = outX + ox;
-		scale.clipY = outY;
-		scale.clipW = ow;
-		scale.clipH = outH;
-		scale.outX = outX + ox;
-		scale.outY = outY;
-		scale.outW = ow;
-		scale.outH = outH;
-		scale.ratioX = rsxGetFixedSint32((float)iw / (float)ow);
-		scale.ratioY = rsxGetFixedSint32((float)inH / (float)outH);
-		scale.inW = iw;
-		scale.inH = inH;
-		scale.pitch = srcPitch;
-		scale.origin = GCM_TRANSFER_ORIGIN_CENTER;
-		scale.interp = GCM_TRANSFER_INTERPOLATOR_LINEAR;
-		scale.offset = srcOff + ix*4;
-		scale.inX = 0;
-		scale.inY = 0;
-		rsxSetTransferScaleSurface(rsxCtx, &scale, &surface);
-	}
-}
-
-void
-resolveAA(Raster *src, uint32 srcOff, uint32 srcPitch, uint32 dstOff, uint32 dstPitch,
-          int32 dx, int32 dy, int32 w, int32 h)
-{
-	int32 aa = rasterAA(src);
-	int32 sx = aa ? 2 : 1, sy = aa == 4 ? 2 : 1;
-	srcOff += src->offsetY*sy*srcPitch + src->offsetX*sx*4;
-	scaleSamples(srcOff, srcPitch, w*sx, h*sy, dstOff, dstPitch, dx, dy, w, h);
-}
-
 void
 videoPresent(Raster *raster, bool vsync)
 {
@@ -717,17 +661,7 @@ videoPresent(Raster *raster, bool vsync)
 	// the 3D unit must be done with the image before the scaler reads it,
 	// and the scaler done before the next frame draws into it again
 	rsxSetWaitForIdle(rsxCtx);
-	int32 aa = rasterAA(raster);
-	static int32 shownAA = 0;
-	if(aa != shownAA){
-		rsxLog("[rsx] picture now %s: %dx%d", aa ? (aa == 4 ? "4x MSAA" : "2x MSAA") : "without MSAA", srcW, srcH);
-		shownAA = aa;
-	}
-	if(aa)
-		scaleSamples(srcOffset, srcPitch, srcW*2, aa == 4 ? srcH*2 : srcH,
-		             fbOffset[cur], dispPitch, offX, offY, outW, outH);
-	else
-		rsxSetTransferScaleSurface(rsxCtx, &scale, &surface);
+	rsxSetTransferScaleSurface(rsxCtx, &scale, &surface);
 	rsxSetWaitForIdle(rsxCtx);
 
 	// no gcmSetWaitFlip: the RSX goes on with the next frame while this
@@ -746,8 +680,7 @@ videoPresent(Raster *raster, bool vsync)
 
 	flipQueued++;
 	if(flipQueued <= 3)
-		rsxLog("[rsx] frame %u presented: %dx%d%s -> %dx%d at %d,%d", flipQueued, srcW, srcH,
-		       aa == 4 ? " (4x MSAA)" : aa == 2 ? " (2x MSAA)" : "", outW, outH, offX, offY);
+		rsxLog("[rsx] frame %u presented: %dx%d -> %dx%d at %d,%d", flipQueued, srcW, srcH, outW, outH, offX, offY);
 	cur = (cur + 1) % FB_COUNT;
 	frame++;
 

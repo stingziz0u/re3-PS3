@@ -38,7 +38,6 @@ namespace ps3 {
 int32 nativeRasterOffset;
 bool dxt1As16 = true;
 bool forceMipmaps = false;
-int32 aaSamples = 0;
 int32 texFilterMode = 0;
 int32 texAniso = 1;
 RasterStats rasterStats;
@@ -428,35 +427,19 @@ allocateTexels(Raster *raster, Ps3Raster *natras)
 	return true;
 }
 
-// Graphics menu ANTIALIASING: the camera raster (the game's picture) and
-// the depth buffer made with it keep 2 or 4 samples per pixel. In memory a
-// pixel's samples sit side by side (2: 2x1, 4: 2x2), so the buffer is a
-// picture twice as wide (and tall): showing it scales it down, which
-// averages the samples (ps3video.cpp)
-static int32 lastCamW, lastCamH, lastCamAA;
-
-int32
-rasterAA(Raster *raster)
-{
-	if(raster == nil)
-		return 0;
-	return GETPS3RASTEREXT(raster->parent)->aa;
-}
-
 // Render targets (and camera textures): linear A8R8G8B8 / Z24S8
 static bool
-allocateSurfaceAA(Raster *raster, Ps3Raster *natras, bool texture, int32 aa)
+allocateSurface(Raster *raster, Ps3Raster *natras, bool texture)
 {
-	natras->aa = aa;
-	int32 physW = raster->width * (aa ? 2 : 1);
-	int32 physH = raster->height * (aa == 4 ? 2 : 1);
-	natras->pitch = (physW*4 + 63) & ~63;
+	natras->swizzled = false;
+	natras->numLevels = 1;
+	natras->pitch = (raster->width*4 + 63) & ~63;
 	natras->levelOffset[0] = 0;
 	VramAlloc a;
 	if(!texture && (raster->type == Raster::CAMERA || raster->type == Raster::ZBUFFER)){
 		SurfaceTiles t;
 		uint32 pitch;
-		if(vramAllocSurface(&a, physW, physH, raster->type == Raster::ZBUFFER, &pitch, &t, aa != 0)){
+		if(vramAllocSurface(&a, raster->width, raster->height, raster->type == Raster::ZBUFFER, &pitch, &t)){
 			natras->pitch = pitch;
 			natras->tile = t.tile;
 			natras->zcomp = t.zcomp;
@@ -468,9 +451,9 @@ allocateSurfaceAA(Raster *raster, Ps3Raster *natras, bool texture, int32 aa)
 			return true;
 		}
 	}
-	if(!vramAlloc(&a, natras->pitch*physH,
+	if(!vramAlloc(&a, natras->pitch*raster->height,
 	              raster->type == Raster::ZBUFFER ? "depth buffer" : "render target")){
-		RWERROR((ERR_ALLOC, natras->pitch*physH));
+		RWERROR((ERR_ALLOC, natras->pitch*raster->height));
 		return false;
 	}
 	setAlloc(natras, a);
@@ -478,37 +461,6 @@ allocateSurfaceAA(Raster *raster, Ps3Raster *natras, bool texture, int32 aa)
 	rasterStats.numTextures++;
 	rasterStats.textureBytes += a.size;
 	return true;
-}
-
-static bool
-allocateSurface(Raster *raster, Ps3Raster *natras, bool texture)
-{
-	natras->swizzled = false;
-	natras->numLevels = 1;
-	int32 aa = 0;
-	if(!texture && raster->type == Raster::CAMERA){
-		if((aaSamples == 2 || aaSamples == 4) && raster->width >= 256 && raster->height >= 256)
-			aa = aaSamples;
-	}else if(!texture && raster->type == Raster::ZBUFFER &&
-	         raster->width == lastCamW && raster->height == lastCamH)
-		aa = lastCamAA;	// the camera's own depth buffer (CameraSize makes it right after)
-	bool ok = allocateSurfaceAA(raster, natras, texture, aa);
-	if(!ok && aa){
-		rsxLog("[rsx] WARNING: no VRAM for the %dx MSAA %dx%d %s: without MSAA", aa,
-		       raster->width, raster->height, raster->type == Raster::ZBUFFER ? "depth buffer" : "camera");
-		aa = 0;
-		ok = allocateSurfaceAA(raster, natras, texture, 0);
-	}
-	if(ok && aa)
-		rsxLog("[rsx] %dx%d %s with %dx MSAA (%dx%d samples)", raster->width, raster->height,
-		       raster->type == Raster::ZBUFFER ? "depth buffer" : "camera", aa,
-		       raster->width*2, raster->height*(aa == 4 ? 2 : 1));
-	if(!texture && raster->type == Raster::CAMERA){
-		lastCamW = raster->width;
-		lastCamH = raster->height;
-		lastCamAA = ok ? aa : 0;
-	}
-	return ok;
 }
 
 static bool
@@ -748,12 +700,10 @@ readbackLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 			}
 		free(tx);
 	}else{
-		// multisampled: the first sample of each pixel
-		int32 sx = natras->aa ? 2 : 1, sy = natras->aa == 4 ? 2 : 1;
 		for(int32 y = 0; y < h; y++){
-			volatile uint32 *src = (volatile uint32*)(natras->vram + y*sy*natras->pitch);
+			volatile uint32 *src = (volatile uint32*)(natras->vram + y*natras->pitch);
 			for(int32 x = 0; x < w; x++, d += 4){
-				uint32 c = src[x*sx];
+				uint32 c = src[x];
 				d[0] = c>>16; d[1] = c>>8; d[2] = c; d[3] = c>>24;
 			}
 		}
@@ -876,8 +826,7 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 		n++;
 	*numLevels = n;
 	*swizzled = natras->swizzled;
-	if(n == 0 || natras->vram == nil || natras->aa){
-		// (a multisampled camera isn't a picture a sampler can read)
+	if(n == 0 || natras->vram == nil){
 		*numLevels = 0;
 		return;
 	}

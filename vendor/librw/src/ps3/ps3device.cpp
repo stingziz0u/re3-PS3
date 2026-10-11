@@ -199,6 +199,7 @@ enum {
 	C_ENVROW = 10,
 	C_FXPARAMS = 12,
 	C_COLORCLAMP = 13,
+	C_FXAA = 14,	// rw_fxaa.vcg: 1/width, 1/height
 	C_LIGHTS = 16,
 	C_BONES = 32,
 	MAX_LIGHTS = 8
@@ -997,7 +998,7 @@ applySamplers(int32 numSamplers)
 				continue;
 		}
 		int32 aniso;
-		int32 filter = menuFilter(st.raster ? st.filter : Texture::LINEAR, curVP == VP_IM2D, &aniso);
+		int32 filter = menuFilter(st.raster ? st.filter : Texture::LINEAR, curVP == VP_IM2D || curVP == VP_FXAA, &aniso);
 		if(levels <= 1)
 			aniso = 1;
 		int32 addrU = st.raster ? st.addressingU : Texture::WRAP;
@@ -1302,6 +1303,10 @@ applyProgramsAndConstants(void)
 	uploadConsts(C_FOGDATA, 2);
 	if(curVP == VP_IM2D)
 		uploadConsts(C_XFORM, 1);
+	if(curVP == VP_FXAA){
+		uploadConsts(C_XFORM, 1);
+		uploadConsts(C_FXAA, 1);
+	}
 	if(usesEnv)
 		uploadConsts(C_ENVROW, 4);
 }
@@ -1355,6 +1360,7 @@ programsInit(void)
 	loadVP(VP_ENV, rw_env_vpo, "env");
 	loadVP(VP_IM2D, rw_im2d_vpo, "im2d");
 	loadVP(VP_IM3D, rw_im3d_vpo, "im3d");
+	loadVP(VP_FXAA, rw_fxaa_vpo, "fxaa");
 	if(!loadFP(FP_SIMPLE, rw_simple_fpo, "simple", 1))
 		return false;
 	if(!loadFP(FP_ENV, rw_env_fpo, "env", 2))
@@ -1362,6 +1368,8 @@ programsInit(void)
 	if(!loadFP(FP_ADD, rw_add_fpo, "add", 1))
 		return false;
 	if(!loadFP(FP_ADDALPHA, rw_addalpha_fpo, "addalpha", 1))
+		return false;
+	if(!loadFP(FP_FXAA, rw_fxaa_fpo, "fxaa", 1))
 		return false;
 	return true;
 }
@@ -1384,11 +1392,9 @@ static int32 vpX, vpY, vpW, vpH;
 // The camera's rasters as the RSX's surface, and its rectangle as viewport
 // and scissor. targetValid says whether anything can be drawn.
 static void
-setFrameBuffer(Camera *cam)
+setFrameBufferRasters(Raster *fb, Raster *zb)
 {
 	gcmContextData *ctx = rsxCtx;
-	Raster *fb = cam->frameBuffer;
-	Raster *zb = cam->zBuffer;
 	uint32 cOff, cPitch, zOff, zPitch;
 
 	targetValid = false;
@@ -1399,18 +1405,6 @@ setFrameBuffer(Camera *cam)
 		static int warned;
 		if(warned < 3){
 			rsxLog("[rsx] WARNING: camera without a usable depth buffer, not drawn");
-			warned++;
-		}
-		return;
-	}
-
-	int32 aa = rasterAA(fb);
-	if(aa != rasterAA(zb)){
-		// MSAA colour with a depth buffer without it (or the other way):
-		// the RSX can't draw that. The game recreates them (ps3.cpp)
-		static int warned;
-		if(warned < 3){
-			rsxLog("[rsx] WARNING: camera %dx MSAA, depth buffer %dx: not drawn", aa, rasterAA(zb));
 			warned++;
 		}
 		return;
@@ -1434,18 +1428,13 @@ setFrameBuffer(Camera *cam)
 		sf.depthOffset = zOff;
 		sf.depthPitch = zPitch;
 		sf.type = GCM_SURFACE_TYPE_LINEAR;
-		sf.antiAlias = aa == 4 ? GCM_SURFACE_SQUARE_ROTATED_4 :
-		               aa == 2 ? GCM_SURFACE_DIAGONAL_CENTERED_2 : GCM_SURFACE_CENTER_1;
+		sf.antiAlias = GCM_SURFACE_CENTER_1;
 		sf.width = fb->parent->width;
 		sf.height = fb->parent->height;
 		sf.x = 0;
 		sf.y = 0;
 		rsxSetSurface(ctx, &sf);
-		if(aa){
-			// no ZCULL region for a multisampled depth buffer
-			rsxSetZCullEnable(ctx, GCM_FALSE, GCM_FALSE);
-			zcullHave = -1;
-		}else if(zcullActive()){
+		if(zcullActive()){
 			int32 want = zcullOn ? 1 : 0;
 			rsxSetZCullControl(ctx, GCM_ZCULL_LESS, GCM_ZCULL_LONES);
 			rsxSetZCullEnable(ctx, want ? GCM_TRUE : GCM_FALSE, GCM_FALSE);
@@ -1479,6 +1468,12 @@ setFrameBuffer(Camera *cam)
 		vpX = x; vpY = y; vpW = w; vpH = h;
 	}
 	targetValid = true;
+}
+
+static void
+setFrameBuffer(Camera *cam)
+{
+	setFrameBufferRasters(cam->frameBuffer, cam->zBuffer);
 }
 
 // Forget what the RSX has: everything is sent again (yq2 / IoQuake3 mark
@@ -1600,10 +1595,122 @@ clearCamera(Camera *cam, RGBA *col, uint32 mode)
 		zcullStale = false;
 }
 
+// ---- FXAA (graphics menu ANTIALIASING) ------------------------------------------
+//
+// Before the camera's picture is shown, a quad over a picture of the same
+// size runs rw_fxaa.fcg on it (the camera raster read as a texture, linear
+// filtered) and that picture is shown instead. A camera texture and a depth
+// buffer of its own (not tested or written) made the first time, again
+// when the size changes. ~2 ms of RSX time at 720p.
+
+bool fxaaOn = false;
+static Raster *fxaaColor, *fxaaDepth;
+static bool fxaaFailed;
+
+static void
+fxaaFree(void)
+{
+	if(fxaaColor) fxaaColor->destroy();
+	if(fxaaDepth) fxaaDepth->destroy();
+	fxaaColor = fxaaDepth = nil;
+}
+
+static Raster*
+fxaaApply(Raster *pic)
+{
+	if(!fxaaOn || pic == nil || pic->type != Raster::CAMERA || rsxCtx == nil)
+		return pic;
+	int32 w = pic->width, h = pic->height;
+	if(fxaaColor && (fxaaColor->width != w || fxaaColor->height != h)){
+		fxaaFree();
+		fxaaFailed = false;
+	}
+	if(fxaaFailed)
+		return pic;
+	if(fxaaColor == nil){
+		fxaaColor = Raster::create(w, h, 32, Raster::CAMERATEXTURE);
+		fxaaDepth = Raster::create(w, h, 0, Raster::ZBUFFER);
+		uint32 o, p;
+		if(fxaaColor == nil || fxaaDepth == nil || !rasterSurface(fxaaColor, &o, &p) || !rasterSurface(fxaaDepth, &o, &p)){
+			rsxLog("[rsx] WARNING: no VRAM for the FXAA picture (%dx%d): FXAA off", w, h);
+			fxaaFree();
+			fxaaFailed = true;
+			return pic;
+		}
+		rsxLog("[rsx] FXAA picture %dx%d made", w, h);
+	}
+
+	RwStateCache saved = rwStateCache;
+	setFrameBufferRasters(fxaaColor, fxaaDepth);
+	if(!targetValid){
+		rwStateCache = saved;
+		return pic;
+	}
+	// the picture must be all drawn before it is read as a texture
+	rsxSetWaitForIdle(rsxCtx);
+	rsxInvalidateTextureCache(rsxCtx, GCM_INVALIDATE_TEXTURE);
+	RwStateCache &s = rwStateCache;
+	s.vertexAlpha = 0;
+	s.textureAlpha = 0;
+	s.blendEnable = 0;
+	s.alphaTestEnable = 0;
+	s.alphaFunc = ALPHAALWAYS;
+	s.zwrite = 0;
+	s.ztest = 0;
+	s.cullmode = CULLNONE;
+	s.stencilenable = 0;
+	s.fogEnable = 0;
+	s.gsalpha = 0;
+	s.texstage[0].raster = pic;
+	s.texstage[0].addressingU = Texture::CLAMP;
+	s.texstage[0].addressingV = Texture::CLAMP;
+	s.texstage[0].filter = Texture::LINEAR;
+	s.texstage[1].raster = nil;
+
+	Im2DVertex v[4];
+	memset(v, 0, sizeof(v));
+	float32 xy[4][2] = { { 0.0f, 0.0f }, { (float32)w, 0.0f }, { 0.0f, (float32)h }, { (float32)w, (float32)h } };
+	for(int32 i = 0; i < 4; i++){
+		v[i].x = xy[i][0];
+		v[i].y = xy[i][1];
+		v[i].w = 1.0f;
+		v[i].r = v[i].g = v[i].b = v[i].a = 255;
+		v[i].u = xy[i][0] / w;
+		v[i].v = xy[i][1] / h;
+	}
+	uint32 off = ringWrite(v, sizeof(v));
+	if(off != 0xFFFFFFFF){
+		bindImmediateAttribs(off, sizeof(Im2DVertex), 4, offsetof(Im2DVertex, r), offsetof(Im2DVertex, u));
+		setVertexProgram(VP_FXAA);
+		setFragmentProgram(FP_FXAA);
+		float32 *x = constWant[C_XFORM];
+		x[0] = 2.0f/w;
+		x[1] = -2.0f/h;
+		x[2] = -1.0f;
+		x[3] = 1.0f;
+		float32 *f = constWant[C_FXAA];
+		f[0] = 1.0f/w;
+		f[1] = 1.0f/h;
+		f[2] = 0.0f;
+		f[3] = 0.0f;
+		if(flushCache()){
+			__asm__ volatile("sync" ::: "memory");
+			rsxDrawVertexArray(rsxCtx, GCM_TYPE_TRIANGLE_STRIP, 0, 4);
+			countDraw();
+			drawStats.verts += 4;
+		}
+	}
+	rwStateCache = saved;
+	// the game's next draws set their own programs and target again
+	setVertexProgram(VP_DEFAULT);
+	setFragmentProgram(FP_SIMPLE);
+	return fxaaColor;
+}
+
 static void
 showRaster(Raster *raster, uint32 flags)
 {
-	videoPresent(raster ? raster->parent : nil, (flags & Raster::FLIPWAITVSYNCH) != 0);
+	videoPresent(fxaaApply(raster ? raster->parent : nil), (flags & Raster::FLIPWAITVSYNCH) != 0);
 	// the next frame: the surface is bound again
 	boundColor = boundDepth = nil;
 	vpX = vpY = vpW = vpH = -1;
@@ -1629,12 +1736,8 @@ rasterRenderFast(Raster *raster, int32 x, int32 y)
 	if(w <= 0 || h <= 0)
 		return 0;
 	rsxSetWaitForIdle(rsxCtx);
-	if(rasterAA(src))
-		// multisampled: scaled down into the copy (the samples averaged)
-		resolveAA(src, srcOff, srcPitch, dstOff, dstPitch, x, y, w, h);
-	else
-		rsxSetTransferImage(rsxCtx, GCM_TRANSFER_LOCAL_TO_LOCAL, dstOff, dstPitch, x, y,
-		                    srcOff, srcPitch, src->offsetX, src->offsetY, w, h, 4);
+	rsxSetTransferImage(rsxCtx, GCM_TRANSFER_LOCAL_TO_LOCAL, dstOff, dstPitch, x, y,
+	                    srcOff, srcPitch, src->offsetX, src->offsetY, w, h, 4);
 	rsxSetWaitForIdle(rsxCtx);
 	textureCacheTouched();
 	return 1;

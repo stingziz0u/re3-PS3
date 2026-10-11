@@ -118,7 +118,6 @@ struct Ps3Raster
 	int8    tile;		// camera / depth buffer: tile region + 1 (0 linear)
 	bool    zcomp, zcull;
 	uint8   vramFmt;	// PS3_VRAM_*: how the texels are kept in VRAM
-	uint8   aa;		// camera / depth buffer: samples per pixel (0: none, 2, 4)
 	bool    forcedMips;	// the MIPMAPS option added the mip levels
 };
 
@@ -151,8 +150,7 @@ extern bool dxt1As16;		// DXT1 textures in 16 bits in VRAM (default on; USRDIR/d
 extern bool forceMipmaps;	// textures loaded without mip levels get them (made on the CPU)
 extern int32 texFilterMode;	// 3D textures: 0 the game's filter, 1 bilinear, 2 trilinear
 extern int32 texAniso;		// 3D textures: anisotropic filtering, 1 (off), 2, 4, 8, 16
-extern int32 aaSamples;		// MSAA of the camera buffers created from now on: 0, 2 or 4
-int32 rasterAA(Raster *raster);	// samples per pixel of a camera / depth raster (0: none)
+extern bool fxaaOn;		// FXAA on the camera's picture before it is shown
 extern bool rsxTiling;		// camera buffers tiled + depth compressed + ZCULL (default on; set before the first camera)
 extern bool zcullOn;		// ZCULL in use (default on; the autotest compares)
 extern int32 blendAlphaRef;	// >0: alpha test ref for alpha blended draws without Z write (smoke...); 0 the game's

@@ -54,8 +54,7 @@ struct SurfaceTiles
 	int8 tile;	// region + 1, 0 none
 	bool zcomp, zcull;
 };
-// plain: no depth compression, no ZCULL (multisampled buffers)
-bool  vramAllocSurface(VramAlloc *a, int32 width, int32 height, bool depth, uint32 *pitch, SurfaceTiles *t, bool plain = false);
+bool  vramAllocSurface(VramAlloc *a, int32 width, int32 height, bool depth, uint32 *pitch, SurfaceTiles *t);
 void  vramFreeSurface(VramAlloc *a, SurfaceTiles *t);	// waits for the RSX if tiled
 bool  zcullActive(void);
 
@@ -71,10 +70,6 @@ bool videoInit(void);
 void videoShutdown(void);
 void videoBeginFrame(void);	// new frame: ring segment, deferred frees
 void videoPresent(Raster *raster, bool vsync);
-// a multisampled camera raster (its w x h at x,y) scaled down into an
-// A8R8G8B8 surface at dx,dy: the samples of each pixel averaged
-void resolveAA(Raster *src, uint32 srcOff, uint32 srcPitch, uint32 dstOff, uint32 dstPitch,
-               int32 dx, int32 dy, int32 w, int32 h);
 int  videoWidth(void);
 int  videoHeight(void);
 
@@ -87,6 +82,7 @@ enum VertexProgramId
 	VP_ENV,
 	VP_IM2D,
 	VP_IM3D,
+	VP_FXAA,	// the FXAA pass (graphics menu ANTIALIASING)
 	NUM_VP
 };
 enum FragmentProgramId
@@ -95,6 +91,7 @@ enum FragmentProgramId
 	FP_ENV,
 	FP_ADD,		// rw_simple for additive blending: kills fragments that add nothing
 	FP_ADDALPHA,	// same, SRCALPHA/ONE
+	FP_FXAA,
 	NUM_FP
 };
 

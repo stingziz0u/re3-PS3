@@ -1,0 +1,49 @@
+// rw_fxaa.fcg -- FXAA, the console version of FXAA 3.11 (Timothy Lottes,
+// NVIDIA; the one made for the PS3's RSX): luma of the four pixel corners
+// and the centre; where the contrast is an edge, two or four taps along it.
+// Luma from the colour (the picture's alpha isn't luma).
+
+#define EDGE_SHARPNESS      8.0
+#define EDGE_THRESHOLD      0.125
+#define EDGE_THRESHOLD_MIN  0.05
+
+void main(float2 pos    : TEXCOORD0,
+          float4 posPos : TEXCOORD1,	// pixel corners: NW (xy), SE (zw)
+          float4 rcp1   : TEXCOORD3,	// -0.5 and +0.5 pixel
+          float4 rcp2   : TEXCOORD4,	// -2 and +2 pixels
+          uniform sampler2D tex : TEXUNIT0,
+          out float4 o_color : COLOR)
+{
+	const float3 L = float3(0.299, 0.587, 0.114);
+	float lumaNw = dot(tex2D(tex, posPos.xy).rgb, L);
+	float lumaSw = dot(tex2D(tex, posPos.xw).rgb, L);
+	float lumaNe = dot(tex2D(tex, posPos.zy).rgb, L) + 1.0/384.0;
+	float lumaSe = dot(tex2D(tex, posPos.zw).rgb, L);
+	float4 rgbyM = tex2D(tex, pos);
+	float lumaM = dot(rgbyM.rgb, L);
+
+	float lumaMax = max(max(lumaNe, lumaSe), max(lumaNw, lumaSw));
+	float lumaMin = min(min(lumaNe, lumaSe), min(lumaNw, lumaSw));
+	float lumaMaxScaledClamped = max(EDGE_THRESHOLD_MIN, lumaMax * EDGE_THRESHOLD);
+	float lumaMaxSubMinM = max(lumaMax, lumaM) - min(lumaMin, lumaM);
+
+	float dirSwMinusNe = lumaSw - lumaNe;
+	float dirSeMinusNw = lumaSe - lumaNw;
+	float2 dir = float2(dirSwMinusNe + dirSeMinusNw, dirSwMinusNe - dirSeMinusNw);
+	float2 dir1 = normalize(dir + float2(1e-6, 0.0));
+
+	float4 rgbyN1 = tex2D(tex, pos - dir1 * rcp1.zw);
+	float4 rgbyP1 = tex2D(tex, pos + dir1 * rcp1.zw);
+	float dirAbsMinTimesC = min(abs(dir1.x), abs(dir1.y)) * EDGE_SHARPNESS;
+	float2 dir2 = clamp(dir1 / max(dirAbsMinTimesC, 1e-6), -2.0, 2.0);
+	float4 rgbyN2 = tex2D(tex, pos - dir2 * rcp2.zw);
+	float4 rgbyP2 = tex2D(tex, pos + dir2 * rcp2.zw);
+
+	float4 rgbyA = rgbyN1 + rgbyP1;
+	float4 rgbyB = (rgbyN2 + rgbyP2) * 0.25 + rgbyA * 0.25;
+	float lumaB = dot(rgbyB.rgb, L);
+	if(lumaB < lumaMin || lumaB > lumaMax)
+		rgbyB.rgb = rgbyA.rgb * 0.5;
+	// not an edge: the pixel as it is
+	o_color = lumaMaxSubMinM < lumaMaxScaledClamped ? rgbyM : float4(rgbyB.rgb, rgbyM.a);
+}
