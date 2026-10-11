@@ -5901,7 +5901,11 @@ CMenuManager::PrintController(void)
 	const float CONTROLLER_SIZE_X = 235.2f;
 	const float CONTROLLER_SIZE_Y = 175.2f;
 	const float CONTROLLER_POS_X = (DEFAULT_SCREEN_WIDTH - CONTROLLER_SIZE_X) / 2.0f;
+#ifdef __PS3__
+	const float CONTROLLER_POS_Y = 200.0f;	// below the page's options (two more in 1.1)
+#else
 	const float CONTROLLER_POS_Y = 160.0f;
+#endif
 
 	float centerX = CONTROLLER_POS_X + CONTROLLER_SIZE_X / 2;
 	float centerY = CONTROLLER_POS_Y + CONTROLLER_SIZE_Y / 2;

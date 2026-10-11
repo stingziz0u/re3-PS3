@@ -37,6 +37,10 @@ namespace ps3 {
 
 int32 nativeRasterOffset;
 bool dxt1As16 = true;
+bool forceMipmaps = false;
+int32 aaSamples = 0;
+int32 texFilterMode = 0;
+int32 texAniso = 1;
 RasterStats rasterStats;
 TexProfile texProfile;
 
@@ -136,6 +140,59 @@ static bool
 isPow2(int32 v)
 {
 	return v > 0 && (v & (v-1)) == 0;
+}
+
+// Graphics menu MIPMAPS: a texture loaded without (all of) its mip levels
+// gets the whole chain, made on the CPU from level 0 when it is written.
+// Only power of two textures keep levels (see allocateTexels).
+static void
+forceMipChain(Raster *raster, Ps3Raster *natras)
+{
+	if(!forceMipmaps || raster->type != Raster::TEXTURE)
+		return;
+	if(!isPow2(raster->width) || !isPow2(raster->height) || (raster->width == 1 && raster->height == 1))
+		return;
+	int32 full = fullMipChain(raster->width, raster->height);
+	if(natras->numLevels >= full)
+		return;
+	natras->numLevels = full;
+	natras->autogenMipmap = 1;
+	natras->forcedMips = 1;
+}
+
+// 2x2 box filter for the MIPMAPS option: colour weighted by alpha (the
+// colour of transparent texels, often black, doesn't bleed into the edges)
+// and alpha halfway to the largest of the four, so cut-out textures (trees,
+// fences: alpha tested) don't thin out and vanish in the distance
+static void
+downsampleCoverage(uint8 *dst, int32 dw, int32 dh, uint8 *src, int32 sw, int32 sh)
+{
+	for(int32 y = 0; y < dh; y++){
+		int32 y0 = y*2 < sh ? y*2 : sh-1;
+		int32 y1 = y*2+1 < sh ? y*2+1 : sh-1;
+		for(int32 x = 0; x < dw; x++){
+			int32 x0 = x*2 < sw ? x*2 : sw-1;
+			int32 x1 = x*2+1 < sw ? x*2+1 : sw-1;
+			uint8 *p[4] = { &src[(y0*sw + x0)*4], &src[(y0*sw + x1)*4],
+			                &src[(y1*sw + x0)*4], &src[(y1*sw + x1)*4] };
+			uint8 *d = &dst[(y*dw + x)*4];
+			int32 asum = 0, amax = 0;
+			for(int32 i = 0; i < 4; i++){
+				asum += p[i][3];
+				if(p[i][3] > amax) amax = p[i][3];
+			}
+			for(int32 k = 0; k < 3; k++){
+				if(asum > 0){
+					int32 c = 0;
+					for(int32 i = 0; i < 4; i++)
+						c += p[i][k] * p[i][3];
+					d[k] = (c + asum/2) / asum;
+				}else
+					d[k] = (p[0][k] + p[1][k] + p[2][k] + p[3][k] + 2) >> 2;
+			}
+			d[3] = ((asum + 2)/4 + amax + 1) / 2;
+		}
+	}
 }
 
 // 2x2 box filter of an RGBA8 level into the next one
@@ -371,19 +428,35 @@ allocateTexels(Raster *raster, Ps3Raster *natras)
 	return true;
 }
 
+// Graphics menu ANTIALIASING: the camera raster (the game's picture) and
+// the depth buffer made with it keep 2 or 4 samples per pixel. In memory a
+// pixel's samples sit side by side (2: 2x1, 4: 2x2), so the buffer is a
+// picture twice as wide (and tall): showing it scales it down, which
+// averages the samples (ps3video.cpp)
+static int32 lastCamW, lastCamH, lastCamAA;
+
+int32
+rasterAA(Raster *raster)
+{
+	if(raster == nil)
+		return 0;
+	return GETPS3RASTEREXT(raster->parent)->aa;
+}
+
 // Render targets (and camera textures): linear A8R8G8B8 / Z24S8
 static bool
-allocateSurface(Raster *raster, Ps3Raster *natras, bool texture)
+allocateSurfaceAA(Raster *raster, Ps3Raster *natras, bool texture, int32 aa)
 {
-	natras->swizzled = false;
-	natras->numLevels = 1;
-	natras->pitch = (raster->width*4 + 63) & ~63;
+	natras->aa = aa;
+	int32 physW = raster->width * (aa ? 2 : 1);
+	int32 physH = raster->height * (aa == 4 ? 2 : 1);
+	natras->pitch = (physW*4 + 63) & ~63;
 	natras->levelOffset[0] = 0;
 	VramAlloc a;
 	if(!texture && (raster->type == Raster::CAMERA || raster->type == Raster::ZBUFFER)){
 		SurfaceTiles t;
 		uint32 pitch;
-		if(vramAllocSurface(&a, raster->width, raster->height, raster->type == Raster::ZBUFFER, &pitch, &t)){
+		if(vramAllocSurface(&a, physW, physH, raster->type == Raster::ZBUFFER, &pitch, &t, aa != 0)){
 			natras->pitch = pitch;
 			natras->tile = t.tile;
 			natras->zcomp = t.zcomp;
@@ -395,9 +468,9 @@ allocateSurface(Raster *raster, Ps3Raster *natras, bool texture)
 			return true;
 		}
 	}
-	if(!vramAlloc(&a, natras->pitch*raster->height,
+	if(!vramAlloc(&a, natras->pitch*physH,
 	              raster->type == Raster::ZBUFFER ? "depth buffer" : "render target")){
-		RWERROR((ERR_ALLOC, natras->pitch*raster->height));
+		RWERROR((ERR_ALLOC, natras->pitch*physH));
 		return false;
 	}
 	setAlloc(natras, a);
@@ -405,6 +478,37 @@ allocateSurface(Raster *raster, Ps3Raster *natras, bool texture)
 	rasterStats.numTextures++;
 	rasterStats.textureBytes += a.size;
 	return true;
+}
+
+static bool
+allocateSurface(Raster *raster, Ps3Raster *natras, bool texture)
+{
+	natras->swizzled = false;
+	natras->numLevels = 1;
+	int32 aa = 0;
+	if(!texture && raster->type == Raster::CAMERA){
+		if((aaSamples == 2 || aaSamples == 4) && raster->width >= 256 && raster->height >= 256)
+			aa = aaSamples;
+	}else if(!texture && raster->type == Raster::ZBUFFER &&
+	         raster->width == lastCamW && raster->height == lastCamH)
+		aa = lastCamAA;	// the camera's own depth buffer (CameraSize makes it right after)
+	bool ok = allocateSurfaceAA(raster, natras, texture, aa);
+	if(!ok && aa){
+		rsxLog("[rsx] WARNING: no VRAM for the %dx MSAA %dx%d %s: without MSAA", aa,
+		       raster->width, raster->height, raster->type == Raster::ZBUFFER ? "depth buffer" : "camera");
+		aa = 0;
+		ok = allocateSurfaceAA(raster, natras, texture, 0);
+	}
+	if(ok && aa)
+		rsxLog("[rsx] %dx%d %s with %dx MSAA (%dx%d samples)", raster->width, raster->height,
+		       raster->type == Raster::ZBUFFER ? "depth buffer" : "camera", aa,
+		       raster->width*2, raster->height*(aa == 4 ? 2 : 1));
+	if(!texture && raster->type == Raster::CAMERA){
+		lastCamW = raster->width;
+		lastCamH = raster->height;
+		lastCamAA = ok ? aa : 0;
+	}
+	return ok;
 }
 
 static bool
@@ -565,6 +669,36 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 	textureCacheTouched();
 }
 
+// Levels 1.. made from level 0 (RGBA8 bytes, the raster's size) by 2x2 box
+// filtering, each uploaded as it is made
+static void
+uploadMipChain(Raster *raster, Ps3Raster *natras, uint8 *rgba)
+{
+	uint8 *prev = rgba;
+	int32 pw = levelDim(raster->originalWidth, 0), ph = levelDim(raster->originalHeight, 0);
+	for(int32 i = 1; i < natras->numLevels; i++){
+		int32 nw = levelDim(raster->originalWidth, i);
+		int32 nh = levelDim(raster->originalHeight, i);
+		uint8 *next = (uint8*)rwMalloc(nw*nh*4, MEMDUR_EVENT | ID_DRIVER);
+		if(next == nil)
+			break;
+		uint64 tm = texProfNow();
+		if(natras->forcedMips)
+			downsampleCoverage(next, nw, nh, prev, pw, ph);
+		else
+			downsampleRGBA8(next, nw, nh, prev, pw, ph);
+		texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
+		uploadLevel(raster, natras, i, next);
+		if(prev != rgba)
+			rwFree(prev);
+		prev = next;
+		pw = nw;
+		ph = nh;
+	}
+	if(prev != rgba)
+		rwFree(prev);
+}
+
 // VRAM (A8R8G8B8) back into RGBA8 bytes. Slow (the CPU reads VRAM): only
 // for read locks, which the game hardly ever does.
 static void
@@ -614,10 +748,12 @@ readbackLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 			}
 		free(tx);
 	}else{
+		// multisampled: the first sample of each pixel
+		int32 sx = natras->aa ? 2 : 1, sy = natras->aa == 4 ? 2 : 1;
 		for(int32 y = 0; y < h; y++){
-			volatile uint32 *src = (volatile uint32*)(natras->vram + y*natras->pitch);
+			volatile uint32 *src = (volatile uint32*)(natras->vram + y*sy*natras->pitch);
 			for(int32 x = 0; x < w; x++, d += 4){
-				uint32 c = src[x];
+				uint32 c = src[x*sx];
 				d[0] = c>>16; d[1] = c>>8; d[2] = c; d[3] = c>>24;
 			}
 		}
@@ -693,28 +829,8 @@ unlockTexture(Raster *raster, Ps3Raster *natras, int32 level)
 			rgba = img->pixels;
 		}
 		uploadLevel(raster, natras, level, rgba);
-		if(level == 0 && natras->autogenMipmap && natras->numLevels > 1){
-			uint8 *prev = rgba;
-			int32 pw = w, ph = h;
-			for(int32 i = 1; i < natras->numLevels; i++){
-				int32 nw = levelDim(raster->originalWidth, i);
-				int32 nh = levelDim(raster->originalHeight, i);
-				uint8 *next = (uint8*)rwMalloc(nw*nh*4, MEMDUR_EVENT | ID_DRIVER);
-				if(next == nil)
-					break;
-				uint64 tm = texProfNow();
-				downsampleRGBA8(next, nw, nh, prev, pw, ph);
-				texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
-				uploadLevel(raster, natras, i, next);
-				if(prev != rgba)
-					rwFree(prev);
-				prev = next;
-				pw = nw;
-				ph = nh;
-			}
-			if(prev != rgba)
-				rwFree(prev);
-		}
+		if(level == 0 && natras->autogenMipmap && natras->numLevels > 1)
+			uploadMipChain(raster, natras, rgba);
 		if(img)
 			img->destroy();
 		natras->serial++;
@@ -760,7 +876,8 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 		n++;
 	*numLevels = n;
 	*swizzled = natras->swizzled;
-	if(n == 0 || natras->vram == nil){
+	if(n == 0 || natras->vram == nil || natras->aa){
+		// (a multisampled camera isn't a picture a sampler can read)
 		*numLevels = 0;
 		return;
 	}
@@ -1011,6 +1128,20 @@ readPalettedD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 
 			rasterStats.numExpanded++;
 		}
 		uploadIndexedLevel(ras, GETPS3RASTEREXT(ras), i, data, pal);
+		Ps3Raster *pn = GETPS3RASTEREXT(ras);
+		if(i == 0 && pn->autogenMipmap && pn->numLevels > 1 && pn->vram){
+			// MIPMAPS option: the chain from level 0 (the TXD's own levels,
+			// if any, are written over it next)
+			uint8 *rgba = (uint8*)rwMalloc(lw*lh*4, MEMDUR_EVENT | ID_DRIVER);
+			if(rgba){
+				for(int32 k = 0; k < lw*lh; k++){
+					uint32 c = pal[data[k]];
+					rgba[k*4+0] = c>>16; rgba[k*4+1] = c>>8; rgba[k*4+2] = c; rgba[k*4+3] = c>>24;
+				}
+				uploadMipChain(ras, pn, rgba);
+				rwFree(rgba);
+			}
+		}
 	}
 	rwFree(data);
 	if(ras)
@@ -1065,6 +1196,7 @@ rasterCreateTexture(Raster *raster)
 	if(raster->format & Raster::MIPMAP)
 		natras->numLevels = fullMipChain(raster->width, raster->height);
 	natras->autogenMipmap = (raster->format & (Raster::MIPMAP|Raster::AUTOMIPMAP)) == (Raster::MIPMAP|Raster::AUTOMIPMAP);
+	forceMipChain(raster, natras);
 
 	if(!allocateTexels(raster, natras)){
 #ifdef RW_PS3_RSX
@@ -1166,8 +1298,10 @@ allocateDXT(Raster *raster, int32 dxt, int32 numLevels, bool32 hasAlpha)
 	natras->numLevels = 1;
 	if(raster->format & Raster::MIPMAP)
 		natras->numLevels = numLevels;
-	// no CPU mipmap generation for DXT: use what the TXD has
+	// no CPU mipmap generation for DXT: use what the TXD has (unless the
+	// MIPMAPS option asks for them: made from the decompressed level 0)
 	natras->autogenMipmap = 0;
+	forceMipChain(raster, natras);
 #ifdef RW_PS3_RSX
 	// DXT1: 16 bits in VRAM (level 0's upload picks 565 or 1555)
 	if(dxt == 1 && dxt1As16 && !hasStorage(natras))

@@ -23,7 +23,8 @@ your own PC copy.
 > full pools and stale pointers, half the smoke particles at 60 fps, DXT1
 > textures in 16 bits in video memory, and a log that records what the game
 > was doing when it crashes or freezes. New: right stick sensitivity
-> settings.
+> settings, and graphics options: mipmaps, texture filtering (bilinear,
+> trilinear, anisotropic) and antialiasing (2x/4x MSAA).
 
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
@@ -46,6 +47,17 @@ PlayStation button icons and the controller picture of the settings page).
 - **Skins**: put `.bmp` skins in `USRDIR/skins`, choose them in *Player setup*.
 - DXT1 textures (most of the PC game's) are kept in 16 bits in video memory:
   half the VRAM, the same look.
+- *Options > Graphics*:
+  - **Mipmaps**: textures that come without smaller versions get them (less
+    shimmering in the distance). They are made as textures load: restart
+    the game for all of them. Uses more video memory.
+  - **Texture filtering**: Default (the game's own), Bilinear, Trilinear,
+    Anisotropic 2x to 16x (sharper ground and roads at an angle). With
+    Mipmaps off, only the textures that have them in their TXD use them.
+  - **Antialiasing**: 2x or 4x MSAA (smoother edges). 4x costs the most
+    GPU time and ~22 MB more video memory: if the frame rate drops at
+    60 fps, use 2x.
+  All three are off/default unless you choose them.
 - *Display > Screen size* for overscan, fixed aspect ratios shown with black
   bars, FPS counter (*Graphics > Show FPS*).
 - Settings saved in `USRDIR/re3.ini`, saves in `USRDIR/userfiles`.

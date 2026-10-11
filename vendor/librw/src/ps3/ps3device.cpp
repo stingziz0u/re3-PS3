@@ -311,6 +311,7 @@ struct HwSampler {
 	uint32 offset;		// the raster's storage (a new raster can reuse the address)
 	int32 levels;
 	int32 filter, addrU, addrV;
+	int32 aniso;
 	bool enabled;
 };
 static HwSampler hwSampler[MAXNUMSTAGES];
@@ -899,6 +900,42 @@ magFilter(int32 filter)
 	        filter == Texture::LINEARMIPNEAREST) ? GCM_TEXTURE_NEAREST : GCM_TEXTURE_LINEAR;
 }
 
+// Graphics menu TEXTURE FILTERING / MIPMAPS, for 3D draws (the 2D ones,
+// HUD and menus, keep the game's filter): bilinear or trilinear between
+// the mip levels, anisotropic on top of trilinear. Point filtered
+// textures stay point filtered.
+static int32
+menuFilter(int32 filter, bool is2D, int32 *aniso)
+{
+	*aniso = 1;
+	if(is2D || filter == Texture::NEAREST || filter == Texture::MIPNEAREST)
+		return filter;
+	switch(texFilterMode){
+	case 1:
+		return Texture::MIPLINEAR;
+	case 2:
+		*aniso = texAniso > 1 ? texAniso : 1;
+		return Texture::LINEARMIPLINEAR;
+	default:
+		// the game's own; generated mip levels are used (bilinear)
+		if(forceMipmaps && filter == Texture::LINEAR)
+			return Texture::MIPLINEAR;
+		return filter;
+	}
+}
+
+static uint8
+gcmAniso(int32 aniso)
+{
+	switch(aniso){
+	case 2: return GCM_TEXTURE_MAX_ANISO_2;
+	case 4: return GCM_TEXTURE_MAX_ANISO_4;
+	case 8: return GCM_TEXTURE_MAX_ANISO_8;
+	case 16: return GCM_TEXTURE_MAX_ANISO_16;
+	default: return GCM_TEXTURE_MAX_ANISO_1;
+	}
+}
+
 static uint8
 wrapMode(int32 addr, bool swizzled)
 {
@@ -959,12 +996,15 @@ applySamplers(int32 numSamplers)
 			if(levels == 0)
 				continue;
 		}
-		int32 filter = st.raster ? st.filter : Texture::LINEAR;
+		int32 aniso;
+		int32 filter = menuFilter(st.raster ? st.filter : Texture::LINEAR, curVP == VP_IM2D, &aniso);
+		if(levels <= 1)
+			aniso = 1;
 		int32 addrU = st.raster ? st.addressingU : Texture::WRAP;
 		int32 addrV = st.raster ? st.addressingV : Texture::WRAP;
 
 		if(h.enabled && h.raster == raster && h.offset == tex.offset && h.levels == levels &&
-		   h.filter == filter && h.addrU == addrU && h.addrV == addrV)
+		   h.filter == filter && h.addrU == addrU && h.addrV == addrV && h.aniso == aniso)
 			continue;
 
 		if(invalidateOnBind && !invalidated){
@@ -975,7 +1015,7 @@ applySamplers(int32 numSamplers)
 		}
 		rsxLoadTexture(ctx, i, &tex);
 		// maxlod is 4.8 fixed point
-		rsxTextureControl(ctx, i, GCM_TRUE, 0, (levels-1) << 8, GCM_TEXTURE_MAX_ANISO_1);
+		rsxTextureControl(ctx, i, GCM_TRUE, 0, (levels-1) << 8, gcmAniso(aniso));
 		rsxTextureFilter(ctx, i, 0, minFilter(filter, levels), magFilter(filter),
 		                 GCM_TEXTURE_CONVOLUTION_QUINCUNX);
 		rsxTextureWrapMode(ctx, i, wrapMode(addrU, swizzled), wrapMode(addrV, swizzled),
@@ -986,6 +1026,7 @@ applySamplers(int32 numSamplers)
 		h.offset = tex.offset;
 		h.levels = levels;
 		h.filter = filter;
+		h.aniso = aniso;
 		h.addrU = addrU;
 		h.addrV = addrV;
 		drawStats.texBinds++;
@@ -1363,6 +1404,18 @@ setFrameBuffer(Camera *cam)
 		return;
 	}
 
+	int32 aa = rasterAA(fb);
+	if(aa != rasterAA(zb)){
+		// MSAA colour with a depth buffer without it (or the other way):
+		// the RSX can't draw that. The game recreates them (ps3.cpp)
+		static int warned;
+		if(warned < 3){
+			rsxLog("[rsx] WARNING: camera %dx MSAA, depth buffer %dx: not drawn", aa, rasterAA(zb));
+			warned++;
+		}
+		return;
+	}
+
 	if(boundColor != fb->parent || boundDepth != zb->parent){
 		gcmSurface sf;
 		memset(&sf, 0, sizeof(sf));
@@ -1381,13 +1434,18 @@ setFrameBuffer(Camera *cam)
 		sf.depthOffset = zOff;
 		sf.depthPitch = zPitch;
 		sf.type = GCM_SURFACE_TYPE_LINEAR;
-		sf.antiAlias = GCM_SURFACE_CENTER_1;
+		sf.antiAlias = aa == 4 ? GCM_SURFACE_SQUARE_ROTATED_4 :
+		               aa == 2 ? GCM_SURFACE_DIAGONAL_CENTERED_2 : GCM_SURFACE_CENTER_1;
 		sf.width = fb->parent->width;
 		sf.height = fb->parent->height;
 		sf.x = 0;
 		sf.y = 0;
 		rsxSetSurface(ctx, &sf);
-		if(zcullActive()){
+		if(aa){
+			// no ZCULL region for a multisampled depth buffer
+			rsxSetZCullEnable(ctx, GCM_FALSE, GCM_FALSE);
+			zcullHave = -1;
+		}else if(zcullActive()){
 			int32 want = zcullOn ? 1 : 0;
 			rsxSetZCullControl(ctx, GCM_ZCULL_LESS, GCM_ZCULL_LONES);
 			rsxSetZCullEnable(ctx, want ? GCM_TRUE : GCM_FALSE, GCM_FALSE);
@@ -1571,8 +1629,12 @@ rasterRenderFast(Raster *raster, int32 x, int32 y)
 	if(w <= 0 || h <= 0)
 		return 0;
 	rsxSetWaitForIdle(rsxCtx);
-	rsxSetTransferImage(rsxCtx, GCM_TRANSFER_LOCAL_TO_LOCAL, dstOff, dstPitch, x, y,
-	                    srcOff, srcPitch, src->offsetX, src->offsetY, w, h, 4);
+	if(rasterAA(src))
+		// multisampled: scaled down into the copy (the samples averaged)
+		resolveAA(src, srcOff, srcPitch, dstOff, dstPitch, x, y, w, h);
+	else
+		rsxSetTransferImage(rsxCtx, GCM_TRANSFER_LOCAL_TO_LOCAL, dstOff, dstPitch, x, y,
+		                    srcOff, srcPitch, src->offsetX, src->offsetY, w, h, 4);
 	rsxSetWaitForIdle(rsxCtx);
 	textureCacheTouched();
 	return 1;

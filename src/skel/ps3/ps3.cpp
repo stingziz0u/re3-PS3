@@ -180,6 +180,75 @@ psCameraBeginUpdate(RwCamera *camera)
 	return TRUE;
 }
 
+#if PS3_STAGE != 1
+// Graphics menu: MIPMAPS, TEXTURE FILTERING, ANTIALIASING (MenuScreensCustom.cpp)
+extern int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
+
+static void
+PS3_ApplyTextureOptions(void)
+{
+	static const int32 filterMode[] = { 0, 1, 2, 2, 2, 2, 2 };
+	static const int32 filterAniso[] = { 1, 1, 1, 2, 4, 8, 16 };
+	int f = gPS3TexFilter;
+	if (f < 0 || f >= (int)ARRAY_SIZE(filterMode))
+		f = gPS3TexFilter = 0;
+	if (rw::ps3::forceMipmaps != !!gPS3Mipmaps || rw::ps3::texFilterMode != filterMode[f] ||
+	    rw::ps3::texAniso != filterAniso[f])
+		PS3_Logf("[video] mipmaps %s (textures loaded from now on), texture filtering %d, anisotropy %dx",
+		         gPS3Mipmaps ? "on" : "off", filterMode[f], filterAniso[f]);
+	rw::ps3::forceMipmaps = !!gPS3Mipmaps;
+	rw::ps3::texFilterMode = filterMode[f];
+	rw::ps3::texAniso = filterAniso[f];
+}
+
+// The camera's rasters are made again when the ANTIALIASING option changes
+// (between frames: the picture just shown is still read by the scaler, its
+// VRAM is freed once the RSX is done with it). Without VRAM for it, or a
+// depth buffer that didn't get it: off.
+static void
+PS3_ApplyAntialias(RwCamera *camera)
+{
+	int want = gPS3Antialias == 2 ? 4 : gPS3Antialias == 1 ? 2 : 0;
+	RwRaster *ras = camera ? RwCameraGetRaster(camera) : nil;
+	RwRaster *zras = camera ? RwCameraGetZRaster(camera) : nil;
+	if (ras == nil || zras == nil)
+		return;
+	int have = rw::ps3::rasterAA(ras), zhave = rw::ps3::rasterAA(zras);
+	if (have == want && zhave == want)
+		return;
+	static int failedFor = -1;
+	if (want == failedFor && have == zhave)
+		return;	// tried already: no VRAM for it
+	int w = RwRasterGetWidth(ras), h = RwRasterGetHeight(ras);
+	for (int attempt = 0; attempt < 2; attempt++) {
+		rw::ps3::aaSamples = attempt == 0 ? want : 0;
+		RwRasterDestroy(ras);
+		RwRasterDestroy(zras);
+		camera->frameBuffer = nil;
+		camera->zBuffer = nil;
+		ras = RwRasterCreate(w, h, 0, rwRASTERTYPECAMERA);
+		zras = RwRasterCreate(w, h, 0, rwRASTERTYPEZBUFFER);
+		if (ras && zras && rw::ps3::rasterAA(ras) == rw::ps3::rasterAA(zras))
+			break;
+		if (ras == nil || zras == nil) {
+			// nothing to fall back to: try once more as before
+			if (ras) RwRasterDestroy(ras);
+			if (zras) RwRasterDestroy(zras);
+			rw::ps3::aaSamples = 0;
+			ras = RwRasterCreate(w, h, 0, rwRASTERTYPECAMERA);
+			zras = RwRasterCreate(w, h, 0, rwRASTERTYPEZBUFFER);
+			break;
+		}
+	}
+	RwCameraSetRaster(camera, ras);
+	RwCameraSetZRaster(camera, zras);
+	int got = rw::ps3::rasterAA(ras);
+	failedFor = got != want ? want : -1;
+	PS3_Logf("[video] antialiasing: %dx MSAA asked, %s", want,
+	         got == want ? "done" : got ? "other" : (want ? "no VRAM for it: off" : "off"));
+}
+#endif
+
 void
 psCameraShowRaster(RwCamera *camera)
 {
@@ -195,6 +264,10 @@ psCameraShowRaster(RwCamera *camera)
 	}
 #endif
 	RwCameraShowRaster(camera, nil, CMenuManager::m_PrefsVsync ? rwRASTERFLIPWAITVSYNC : rwRASTERFLIPDONTWAIT);
+#if PS3_STAGE != 1
+	PS3_ApplyTextureOptions();
+	PS3_ApplyAntialias(camera);
+#endif
 }
 
 RwImage*
