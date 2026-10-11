@@ -175,6 +175,13 @@ downsampleCoverage(uint8 *dst, int32 dw, int32 dh, uint8 *src, int32 sw, int32 s
 			uint8 *p[4] = { &src[(y0*sw + x0)*4], &src[(y0*sw + x1)*4],
 			                &src[(y1*sw + x0)*4], &src[(y1*sw + x1)*4] };
 			uint8 *d = &dst[(y*dw + x)*4];
+			if((p[0][3] & p[1][3] & p[2][3] & p[3][3]) == 255){
+				// opaque (most of them): the plain average, no divisions
+				for(int32 k = 0; k < 3; k++)
+					d[k] = (p[0][k] + p[1][k] + p[2][k] + p[3][k] + 2) >> 2;
+				d[3] = 255;
+				continue;
+			}
 			int32 asum = 0, amax = 0;
 			for(int32 i = 0; i < 4; i++){
 				asum += p[i][3];
@@ -513,6 +520,125 @@ getScratch(uint32 size)
 	return scratch;
 }
 
+// Swizzled stores in 8x8 tiles: with both sides at least 8 the 64 texels
+// of a tile are contiguous in the Morton order (the low 3 bits of x and y
+// interleave first), so the writes go out in order instead of all over a
+// buffer of up to 4 MB (every store a cache miss: most of the time of
+// turning a texture into a PS3 one, and so of the hitches when new areas
+// stream in). get(i) gives texel i of the row-major source.
+static const uint8 mortX8[8] = { 0, 1, 4, 5, 16, 17, 20, 21 };
+static const uint8 mortY8[8] = { 0, 2, 8, 10, 32, 34, 40, 42 };
+
+template<typename T, typename Get>
+static void
+swizzleStore(T *dst, int32 w, int32 h, const uint32 *tx, const uint32 *ty, Get get)
+{
+	if(w >= 8 && h >= 8){
+		for(int32 y0 = 0; y0 < h; y0 += 8)
+			for(int32 x0 = 0; x0 < w; x0 += 8){
+				T *d = dst + (tx[x0] | ty[y0]);
+				for(int32 dy = 0; dy < 8; dy++){
+					int32 i = (y0+dy)*w + x0;
+					uint32 my = mortY8[dy];
+					for(int32 dx = 0; dx < 8; dx++)
+						d[mortX8[dx] | my] = get(i + dx);
+				}
+			}
+	}else{
+		for(int32 y = 0; y < h; y++)
+			for(int32 x = 0; x < w; x++)
+				dst[tx[x] | ty[y]] = get(y*w + x);
+	}
+}
+
+// DXT blocks into RGBA8 bytes (w and h multiples of 4), the same texels as
+// librw's Image::setPixelsDXT (its rules: DXT3 always four colours, DXT1
+// and DXT5 three and transparent when col0 <= col1) at a fraction of the
+// cost: tables for the 5/6 bit expansion, the thirds as a multiply.
+static uint8 expand5[32], expand6[64];
+
+static inline uint32 le16(const uint8 *p) { return p[0] | p[1]<<8; }
+static inline uint32 le32(const uint8 *p) { return p[0] | p[1]<<8 | p[2]<<16 | (uint32)p[3]<<24; }
+static inline uint32 third(uint32 x) { return (x * 0xAAABu) >> 17; }	// x/3, x < 65536
+
+static void
+decodeDXT(int32 dxt, uint8 *dst, int32 w, int32 h, const uint8 *src)
+{
+	if(expand5[31] == 0){
+		for(int32 i = 0; i < 32; i++) expand5[i] = i*0xFF/0x1F;
+		for(int32 i = 0; i < 64; i++) expand6[i] = i*0xFF/0x3F;
+	}
+	int32 bsize = dxt == 1 ? 8 : 16;
+	for(int32 by = 0; by < h; by += 4)
+		for(int32 bx = 0; bx < w; bx += 4, src += bsize){
+			const uint8 *cb = dxt == 1 ? src : src + 8;
+			uint32 col0 = le16(cb), col1 = le16(cb+2);
+			uint8 c[4][4];
+			c[0][0] = expand5[(col0>>11) & 0x1F]; c[0][1] = expand6[(col0>>5) & 0x3F]; c[0][2] = expand5[col0 & 0x1F]; c[0][3] = 0xFF;
+			c[1][0] = expand5[(col1>>11) & 0x1F]; c[1][1] = expand6[(col1>>5) & 0x3F]; c[1][2] = expand5[col1 & 0x1F]; c[1][3] = 0xFF;
+			if(dxt == 3 || col0 > col1){
+				for(int32 k = 0; k < 3; k++){
+					c[2][k] = third(2*c[0][k] + c[1][k]);
+					c[3][k] = third(c[0][k] + 2*c[1][k]);
+				}
+				c[2][3] = c[3][3] = 0xFF;
+			}else{
+				for(int32 k = 0; k < 3; k++)
+					c[2][k] = (c[0][k] + c[1][k]) / 2;
+				c[2][3] = 0xFF;
+				c[3][0] = c[3][1] = c[3][2] = c[3][3] = 0;
+			}
+			uint8 a[16];
+			if(dxt == 3){
+				for(int32 k = 0; k < 8; k++){
+					a[2*k] = (src[k] & 0xF)*17;
+					a[2*k+1] = (src[k] >> 4)*17;
+				}
+			}else if(dxt == 5){
+				uint32 ap[8];
+				ap[0] = src[0];
+				ap[1] = src[1];
+				if(ap[0] > ap[1]){
+					for(int32 i = 1; i < 7; i++)
+						ap[i+1] = ((7-i)*ap[0] + i*ap[1]) / 7;
+				}else{
+					for(int32 i = 1; i < 5; i++)
+						ap[i+1] = ((5-i)*ap[0] + i*ap[1]) / 5;
+					ap[6] = 0;
+					ap[7] = 0xFF;
+				}
+				uint64 bits = (uint64)le32(src+2) | (uint64)le16(src+6) << 32;
+				for(int32 k = 0; k < 16; k++, bits >>= 3)
+					a[k] = ap[bits & 7];
+			}
+			uint32 idx = le32(cb+4);
+			for(int32 k = 0; k < 16; k++, idx >>= 2){
+				uint8 *d = dst + ((by + (k>>2))*w + bx + (k&3))*4;
+				const uint8 *cc = c[idx & 3];
+				d[0] = cc[0]; d[1] = cc[1]; d[2] = cc[2];
+				d[3] = dxt == 1 ? cc[3] : a[k];
+			}
+		}
+}
+
+static inline uint16
+rgbaTo565(const uint8 *s)
+{
+	return (uint16)((s[0]>>3)<<11 | (s[1]>>2)<<5 | s[2]>>3);
+}
+
+static inline uint16
+rgbaTo1555(const uint8 *s)
+{
+	return (uint16)((s[3] >= 128 ? 0x8000 : 0) | (s[0]>>3)<<10 | (s[1]>>3)<<5 | s[2]>>3);
+}
+
+static inline uint32
+rgbaToARGB(const uint8 *s)
+{
+	return (uint32)s[3]<<24 | (uint32)s[0]<<16 | (uint32)s[1]<<8 | s[2];
+}
+
 // One RGBA8 level (bytes R G B A, w x h) into VRAM as A8R8G8B8
 static void
 uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
@@ -543,13 +669,11 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 			uint32 *tx = (uint32*)(buf + ((bytes + 3) & ~3));
 			uint32 *ty = tx + w;
 			swizzleTables(tx, ty, w, h);
-			uint8 *s = rgba;
-			for(int32 y = 0; y < h; y++){
-				uint32 oy = ty[y];
-				for(int32 x = 0; x < w; x++, s += 4)
-					pix[tx[x] | oy] = a1 ? (uint16)((s[3] >= 128 ? 0x8000 : 0) | (s[0]>>3)<<10 | (s[1]>>3)<<5 | s[2]>>3)
-					                     : (uint16)((s[0]>>3)<<11 | (s[1]>>2)<<5 | s[2]>>3);
-			}
+			const uint8 *s = rgba;
+			if(a1)
+				swizzleStore(pix, w, h, tx, ty, [s](int32 i){ return rgbaTo1555(s + i*4); });
+			else
+				swizzleStore(pix, w, h, tx, ty, [s](int32 i){ return rgbaTo565(s + i*4); });
 			memcpy(natras->vram + natras->levelOffset[level], pix, bytes);
 			vramFlush(natras->vram + natras->levelOffset[level], bytes);
 		}else{
@@ -585,12 +709,8 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 		uint32 *ty = tx + w;
 		uint64 t0 = texProfNow();
 		swizzleTables(tx, ty, w, h);
-		uint8 *s = rgba;
-		for(int32 y = 0; y < h; y++){
-			uint32 oy = ty[y];
-			for(int32 x = 0; x < w; x++, s += 4)
-				pix[tx[x] | oy] = (uint32)s[3]<<24 | (uint32)s[0]<<16 | (uint32)s[1]<<8 | s[2];
-		}
+		const uint8 *s = rgba;
+		swizzleStore(pix, w, h, tx, ty, [s](int32 i){ return rgbaToARGB(s + i*4); });
 		uint64 t1 = texProfNow();
 		memcpy(natras->vram + natras->levelOffset[level], pix, bytes);
 		vramFlush(natras->vram + natras->levelOffset[level], bytes);
@@ -761,28 +881,36 @@ unlockTexture(Raster *raster, Ps3Raster *natras, int32 level)
 		Image *img = nil;
 		int32 w = levelDim(raster->originalWidth, level);
 		int32 h = levelDim(raster->originalHeight, level);
+		uint8 *decoded = nil;
 		if(natras->isCompressed){
 			// DXT: decompressed here (the RSX could take the blocks, but
 			// linear compressed textures don't repeat)
-			int32 dw = w < 4 ? 4 : w;
-			int32 dh = h < 4 ? 4 : h;
-			img = Image::create(dw, dh, 32);
-			img->allocate();
+			int32 dw = (w + 3) & ~3;
+			int32 dh = (h + 3) & ~3;
+			decoded = (uint8*)rwMalloc(dw*dh*4, MEMDUR_EVENT | ID_DRIVER);
+			if(decoded == nil){
+				rwFree(natras->staging);
+				natras->staging = nil;
+				natras->lockedLevel = -1;
+				return;
+			}
 			int dxt = natras->texFormat == PS3_TEX_DXT1 ? 1 :
 			          natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
-			img->setPixelsDXT(dxt, natras->staging);
+			uint64 td = texProfNow();
+			decodeDXT(dxt, decoded, dw, dh, natras->staging);
+			texProfile.us[TEXPROF_DXT] += texProfNow() - td;
 			if(dw != w || dh != h){
 				// tiny level: the top left corner
 				for(int32 y = 0; y < h; y++)
-					memmove(img->pixels + y*w*4, img->pixels + y*img->stride, w*4);
+					memmove(decoded + y*w*4, decoded + y*dw*4, w*4);
 			}
-			rgba = img->pixels;
+			rgba = decoded;
 		}
 		uploadLevel(raster, natras, level, rgba);
 		if(level == 0 && natras->autogenMipmap && natras->numLevels > 1)
 			uploadMipChain(raster, natras, rgba);
-		if(img)
-			img->destroy();
+		if(decoded)
+			rwFree(decoded);
 		natras->serial++;
 	}
 	rwFree(natras->staging);
@@ -979,11 +1107,7 @@ uploadIndexedLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *
 		uint32 *tx = (uint32*)(buf + bytes);
 		uint32 *ty = tx + w;
 		swizzleTables(tx, ty, w, h);
-		for(int32 y = 0; y < h; y++){
-			uint32 oy = ty[y];
-			for(int32 x = 0; x < w; x++)
-				pix[tx[x] | oy] = pal[*idx++];
-		}
+		swizzleStore(pix, w, h, tx, ty, [idx, pal](int32 i){ return pal[idx[i]]; });
 		memcpy(natras->vram + natras->levelOffset[level], pix, bytes);
 		vramFlush(natras->vram + natras->levelOffset[level], bytes);
 	}else{

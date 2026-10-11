@@ -212,6 +212,7 @@ enum {
 	TEXPROF_MIPS,		// mip levels made on the CPU
 	TEXPROF_READBACK,	// VRAM read back by the CPU (slow)
 	TEXPROF_INDEXED,	// palettized D3D8 textures, fast path, all of it
+	TEXPROF_DXT,		// DXT blocks decoded on the CPU
 	TEXPROF_NUM
 };
 struct TexProfile {

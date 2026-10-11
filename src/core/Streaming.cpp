@@ -1840,11 +1840,22 @@ CStreaming::RequestModelStream(int32 ch)
 }
 
 // Load data previously read from disc
+#ifdef __PS3__
+// LoadRequestedModels (the streaming of every frame): a channel's files are
+// turned into objects until ~4 ms went by, the rest on its next turn, so a
+// frame doesn't convert four big TXDs in a row (the hitches when new areas
+// stream in). Loading screens and FlushChannels convert everything at once.
+static bool ps3StreamBudget;
+#endif
+
 bool
 CStreaming::ProcessLoadingChannel(int32 ch)
 {
 	int status;
 	int i, id, cdsize;
+#ifdef __PS3__
+	uint32 ps3Start = CTimer::GetCurrentTimeInCycles();
+#endif
 
 	status = CdStreamGetStatus(ch);
 	if(status != STREAM_NONE){
@@ -1894,6 +1905,21 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 				}else
 					ms_channel[ch].streamIds[i] = -1;
 			}
+#ifdef __PS3__
+			if(ps3StreamBudget && ms_channel[ch].state != CHANNELSTATE_STARTED &&
+			   CTimer::GetCurrentTimeInCycles() - ps3Start > 4 * CTimer::GetCyclesPerMillisecond()){
+				bool more = false;
+				for(int j = i+1; j < 4; j++)
+					if(ms_channel[ch].streamIds[j] != -1)
+						more = true;
+				if(more){
+					// still READING: the next turn of this channel goes on
+					// with the files left (its buffer isn't reused before)
+					ms_channel[ch].state = CHANNELSTATE_READING;
+					return false;
+				}
+			}
+#endif
 		}
 	}
 
@@ -1955,8 +1981,15 @@ CStreaming::LoadRequestedModels(void)
 
 	// We have data, load
 	if(ms_channel[currentChannel].state == CHANNELSTATE_READING ||
-	   ms_channel[currentChannel].state == CHANNELSTATE_STARTED)
+	   ms_channel[currentChannel].state == CHANNELSTATE_STARTED){
+#ifdef __PS3__
+		ps3StreamBudget = true;
 		ProcessLoadingChannel(currentChannel);
+		ps3StreamBudget = false;
+#else
+		ProcessLoadingChannel(currentChannel);
+#endif
+	}
 
 	if(ms_channelError == -1){
 		// Channel is idle, read more data

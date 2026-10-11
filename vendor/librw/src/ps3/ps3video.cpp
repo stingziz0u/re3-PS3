@@ -551,10 +551,10 @@ logStats(void)
 		       t.imgLookups, t.imgLookupUs/1000.0);
 	if(t.levels || t.textures || t.readbacks || t.indexed)
 		rsxLog("[tex]   %u levels, %u Ktexels; palettized fast path: %u textures %.1f ms; "
-		       "others: %u converted %.1f ms, to RGBA8 %.1f, swizzle %.1f, VRAM write %.1f, mipmaps %.1f, readback %.1f (%u)",
+		       "others: %u converted %.1f ms, to RGBA8 %.1f, swizzle %.1f, VRAM write %.1f, mipmaps %.1f, DXT decode %.1f, readback %.1f (%u)",
 		       t.levels, (uint32)(t.texels/1000), t.indexed, t.us[TEXPROF_INDEXED]/1000.0,
 		       t.textures, t.us[TEXPROF_CONVERT]/1000.0, t.us[TEXPROF_FROMIMAGE]/1000.0, t.us[TEXPROF_SWIZZLE]/1000.0,
-		       t.us[TEXPROF_VRAM]/1000.0, t.us[TEXPROF_MIPS]/1000.0, t.us[TEXPROF_READBACK]/1000.0, t.readbacks);
+		       t.us[TEXPROF_VRAM]/1000.0, t.us[TEXPROF_MIPS]/1000.0, t.us[TEXPROF_DXT]/1000.0, t.us[TEXPROF_READBACK]/1000.0, t.readbacks);
 	memset(&texProfile, 0, sizeof(texProfile));
 	slowFrames = verySlowFrames = 0;
 	worstFrameUs = 0;

@@ -24,7 +24,9 @@ your own PC copy.
 > textures in 16 bits in video memory, and a log that records what the game
 > was doing when it crashes or freezes. New: right stick sensitivity
 > settings, and graphics options: mipmaps, texture filtering (bilinear,
-> trilinear, anisotropic) and antialiasing (FXAA).
+> trilinear, anisotropic) and antialiasing (FXAA), and fewer hitches when
+> new areas stream in (textures converted several times faster, spread
+> over frames, and the log written in the background).
 
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
