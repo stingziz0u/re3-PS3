@@ -119,6 +119,7 @@ struct Ps3Raster
 	bool    zcomp, zcull;
 	uint8   vramFmt;	// PS3_VRAM_*: how the texels are kept in VRAM
 	bool    forcedMips;	// the MIPMAPS option added the mip levels
+	int8    pendingJobs;	// levels queued for the texture thread (stage 2)
 };
 
 // VRAM formats of a texture (stage 2). DXT1 (most of VC's PC textures) is
@@ -146,6 +147,12 @@ void gpuMark(int32 id);
 extern bool gpuTimersOn;	// default off (the timestamp reports hang the RSX)
 extern bool additiveKill;	// additive draws kill the fragments that add nothing (default on)
 extern bool dxt1As16;		// DXT1 textures in 16 bits in VRAM (default on; USRDIR/dxt32.txt turns it off)
+extern bool texAsync;		// textures converted on a second PPU thread (default on; USRDIR/notexthread.txt turns it off)
+// texels the texture thread still has to convert (the game's streaming
+// stops loading more in a frame while this is high); 0 in stage 1
+uint32 textureBacklog(void);
+// every queued texture converted and usable (before a frame is drawn)
+void textureJobsSync(void);
 // Graphics menu (the game sets these every frame):
 extern bool forceMipmaps;	// textures loaded without mip levels get them (made on the CPU)
 extern int32 texFilterMode;	// 3D textures: 0 the game's filter, 1 bilinear, 2 trilinear
@@ -235,6 +242,10 @@ struct TexProfile {
 	// files (once per name now, see imageMissKnown)
 	uint32 imgLookups;
 	uint64 imgLookupUs;
+	// the texture thread: levels it converted, levels the game thread took
+	// over while waiting at the frame's start, and how long it waited
+	uint32 asyncLevels, helpedLevels;
+	uint64 syncWaitUs;
 };
 // names of textures that aren't image files either (texture.cpp)
 bool imageMissKnown(const char *name, const char *mask);

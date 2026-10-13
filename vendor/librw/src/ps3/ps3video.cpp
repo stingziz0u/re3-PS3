@@ -555,6 +555,9 @@ logStats(void)
 		       t.levels, (uint32)(t.texels/1000), t.indexed, t.us[TEXPROF_INDEXED]/1000.0,
 		       t.textures, t.us[TEXPROF_CONVERT]/1000.0, t.us[TEXPROF_FROMIMAGE]/1000.0, t.us[TEXPROF_SWIZZLE]/1000.0,
 		       t.us[TEXPROF_VRAM]/1000.0, t.us[TEXPROF_MIPS]/1000.0, t.us[TEXPROF_DXT]/1000.0, t.us[TEXPROF_READBACK]/1000.0, t.readbacks);
+	if(t.asyncLevels || t.helpedLevels)
+		rsxLog("[tex]   texture thread: %u levels; the game thread did %u at the frame's start, %.1f ms there in all; backlog now %u Ktexels",
+		       t.asyncLevels, t.helpedLevels, t.syncWaitUs/1000.0, textureBacklog()/1000);
 	memset(&texProfile, 0, sizeof(texProfile));
 	slowFrames = verySlowFrames = 0;
 	worstFrameUs = 0;

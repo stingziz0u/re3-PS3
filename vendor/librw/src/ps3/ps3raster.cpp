@@ -29,6 +29,11 @@
 #include "ps3rsx.h"
 #endif
 #include <sys/systime.h>
+#ifdef RW_PS3_RSX
+#include <sys/thread.h>
+#include <sys/mutex.h>
+#include <sys/cond.h>
+#endif
 
 #define PLUGIN_ID ID_DRIVER
 
@@ -233,6 +238,10 @@ downsampleRGBA8(uint8 *dst, int32 dw, int32 dh, uint8 *src, int32 sw, int32 sh)
 // Stage 1: main memory
 // ============================================================================
 
+bool texAsync = false;	// no texture thread without the RSX
+uint32 textureBacklog(void) { return 0; }
+void textureJobsSync(void) { }
+
 static bool
 allocateTexels(Raster *raster, Ps3Raster *natras)
 {
@@ -369,6 +378,7 @@ setAlloc(Ps3Raster *natras, const VramAlloc &a)
 }
 
 static bool texCacheDirty;
+static void tjCancelRaster(Ps3Raster *natras);	// the texture thread (below)
 
 void textureCacheTouched(void) { texCacheDirty = true; }
 bool textureCacheDirty(void) { return texCacheDirty; }
@@ -377,6 +387,9 @@ void textureCacheClean(void) { texCacheDirty = false; }
 static void
 freeStorage(Ps3Raster *natras)
 {
+	// levels still queued for the texture thread: dropped (the one being
+	// converted finishes first: it writes into this VRAM)
+	tjCancelRaster(natras);
 	if(natras->vramBlock){
 		VramAlloc a = getAlloc(natras);
 		rasterStats.numTextures--;
@@ -512,19 +525,54 @@ swizzleTables(uint32 *tx, uint32 *ty, int32 w, int32 h)
 	}
 }
 
-// Conversion buffer, grown on demand
-static uint8 *scratch;
-static uint32 scratchSize;
+// Conversion buffers. The game thread's grow on demand; the texture
+// thread's are sized by the game thread before it queues a level (malloc
+// only ever runs on the game thread)
+struct ConvBuf { uint8 *p; uint32 size; };
+struct ConvCtx {
+	ConvBuf scratch, decoded, mipA, mipB;
+	bool canGrow;		// the game thread's
+	bool defer;		// levels written go in validBits, made usable later by the game thread
+	uint16 validBits;
+};
+static ConvCtx mainCtx = { {nil, 0}, {nil, 0}, {nil, 0}, {nil, 0}, true, false, 0 };
 
 static uint8*
-getScratch(uint32 size)
+convBuf(ConvCtx *cx, ConvBuf *b, uint32 need)
 {
-	if(size > scratchSize){
-		free(scratch);
-		scratch = (uint8*)malloc(size);
-		scratchSize = scratch ? size : 0;
+	if(need <= b->size)
+		return b->p;
+	if(!cx->canGrow)
+		return nil;
+	free(b->p);
+	b->p = (uint8*)malloc(need);
+	b->size = b->p ? need : 0;
+	return b->p;
+}
+
+static void
+convFree(ConvCtx *cx)
+{
+	ConvBuf *bufs[4] = { &cx->scratch, &cx->decoded, &cx->mipA, &cx->mipB };
+	for(int32 i = 0; i < 4; i++){
+		free(bufs[i]->p);
+		bufs[i]->p = nil;
+		bufs[i]->size = 0;
 	}
-	return scratch;
+}
+
+static inline uint8* getScratch(ConvCtx *cx, uint32 size) { return convBuf(cx, &cx->scratch, size); }
+
+// a level is in VRAM: usable now, or once the game thread collects the job
+static void
+levelDone(ConvCtx *cx, Ps3Raster *natras, int32 level)
+{
+	if(cx->defer)
+		cx->validBits |= 1<<level;
+	else{
+		natras->validLevels |= 1<<level;
+		textureCacheTouched();
+	}
 }
 
 // Swizzled stores in 8x8 tiles: with both sides at least 8 the 64 texels
@@ -759,7 +807,7 @@ rgbaToARGB(const uint8 *s)
 
 // One RGBA8 level (bytes R G B A, w x h) into VRAM as A8R8G8B8
 static void
-uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
+uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx *cx)
 {
 	int32 w = levelDim(raster->originalWidth, level);
 	int32 h = levelDim(raster->originalHeight, level);
@@ -780,7 +828,7 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 		uint32 bytes;
 		if(natras->swizzled){
 			bytes = w*h*2;
-			uint8 *buf = getScratch(bytes + (w+h)*4);
+			uint8 *buf = getScratch(cx, bytes + (w+h)*4);
 			if(buf == nil)
 				return;
 			uint16 *pix = (uint16*)buf;
@@ -796,7 +844,7 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 			vramFlush(natras->vram + natras->levelOffset[level], bytes);
 		}else{
 			bytes = w*h*2;
-			uint16 *row = (uint16*)getScratch(w*2 + 4);
+			uint16 *row = (uint16*)getScratch(cx, w*2 + 4);
 			if(row == nil)
 				return;
 			uint8 *s = rgba;
@@ -812,14 +860,13 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 		texProfile.levels++;
 		texProfile.texels += w*h;
 		drawStats.texUploadBytes += bytes;
-		natras->validLevels |= 1<<level;
-		textureCacheTouched();
+		levelDone(cx, natras, level);
 		return;
 	}
 
 	if(natras->swizzled){
 		uint32 bytes = w*h*4;
-		uint8 *buf = getScratch(bytes + (w+h)*4);
+		uint8 *buf = getScratch(cx, bytes + (w+h)*4);
 		if(buf == nil)
 			return;
 		uint32 *pix = (uint32*)buf;
@@ -839,7 +886,7 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 		texProfile.texels += w*h;
 		drawStats.texUploadBytes += bytes;
 	}else{
-		uint32 *row = (uint32*)getScratch(w*4);
+		uint32 *row = (uint32*)getScratch(cx, w*4);
 		if(row == nil)
 			return;
 		uint8 *s = rgba;
@@ -855,51 +902,51 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 		texProfile.texels += w*h;
 		drawStats.texUploadBytes += w*h*4;
 	}
-	natras->validLevels |= 1<<level;
-	textureCacheTouched();
+	levelDone(cx, natras, level);
 }
 
-// Levels 1.. made from level 0 (RGBA8 bytes, the raster's size) by 2x2 box
-// filtering, each uploaded as it is made
+// Levels from+1.. made from level "from" (RGBA8 bytes) by 2x2 box
+// filtering, each uploaded as it is made (two buffers in turn)
 static void
-uploadMipChain(Raster *raster, Ps3Raster *natras, uint8 *rgba)
+uploadMipChain(Raster *raster, Ps3Raster *natras, uint8 *rgba, int32 from, ConvCtx *cx)
 {
+	if(from+1 >= natras->numLevels)
+		return;
 	uint8 *prev = rgba;
-	int32 pw = levelDim(raster->originalWidth, 0), ph = levelDim(raster->originalHeight, 0);
-	for(int32 i = 1; i < natras->numLevels; i++){
+	int32 pw = levelDim(raster->originalWidth, from), ph = levelDim(raster->originalHeight, from);
+	uint32 need = levelDim(raster->originalWidth, from+1)*levelDim(raster->originalHeight, from+1)*4;
+	uint8 *a = convBuf(cx, &cx->mipA, need);
+	uint8 *b = convBuf(cx, &cx->mipB, need);
+	if(a == nil || b == nil)
+		return;
+	for(int32 i = from+1; i < natras->numLevels; i++){
 		int32 nw = levelDim(raster->originalWidth, i);
 		int32 nh = levelDim(raster->originalHeight, i);
-		uint8 *next = (uint8*)rwMalloc(nw*nh*4, MEMDUR_EVENT | ID_DRIVER);
-		if(next == nil)
-			break;
+		uint8 *next = prev == a ? b : a;
 		uint64 tm = texProfNow();
 		if(natras->forcedMips)
 			downsampleCoverage(next, nw, nh, prev, pw, ph);
 		else
 			downsampleRGBA8(next, nw, nh, prev, pw, ph);
 		texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
-		uploadLevel(raster, natras, i, next);
-		if(prev != rgba)
-			rwFree(prev);
+		uploadLevel(raster, natras, i, next, cx);
 		prev = next;
 		pw = nw;
 		ph = nh;
 	}
-	if(prev != rgba)
-		rwFree(prev);
 }
 
 // A DXT level written by the game straight into its swizzled VRAM (see
 // dxtToSwizzled). false: not this way (linear, tiny, or level 0 of a
 // texture whose mip levels are made from it: decodeDXT + uploadLevel)
 static bool
-uploadDXTDirect(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blocks)
+uploadDXTDirect(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blocks, ConvCtx *cx, bool mipsAfter = false)
 {
 	int32 w = levelDim(raster->originalWidth, level);
 	int32 h = levelDim(raster->originalHeight, level);
 	if(!natras->swizzled || w < 4 || h < 4 || level >= natras->numLevels || natras->vram == nil)
 		return false;
-	if(level == 0 && natras->autogenMipmap && natras->numLevels > 1)
+	if(level == 0 && natras->autogenMipmap && natras->numLevels > 1 && !mipsAfter)
 		return false;
 	int32 dxt = natras->texFormat == PS3_TEX_DXT1 ? 1 :
 	            natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
@@ -912,7 +959,7 @@ uploadDXTDirect(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blo
 	}
 	uint64 t0 = texProfNow();
 	uint32 bytes = w*h*(natras->vramFmt != PS3_VRAM_ARGB8 ? 2 : 4);
-	uint8 *buf = getScratch(bytes + (w+h)*4);
+	uint8 *buf = getScratch(cx, bytes + (w+h)*4);
 	if(buf == nil)
 		return false;
 	uint32 *tx = (uint32*)(buf + ((bytes + 3) & ~3));
@@ -925,8 +972,7 @@ uploadDXTDirect(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blo
 	texProfile.levels++;
 	texProfile.texels += w*h;
 	drawStats.texUploadBytes += bytes;
-	natras->validLevels |= 1<<level;
-	textureCacheTouched();
+	levelDone(cx, natras, level);
 	return true;
 }
 
@@ -989,6 +1035,424 @@ readbackLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 	}
 }
 
+// The MIPMAPS option on a DXT texture: its level 1 straight from the
+// blocks (a 4x4 block is 2x2 texels of it), with the filter of
+// downsampleCoverage (coverage) or downsampleRGBA8. Level 0 goes into VRAM
+// by dxtToSwizzled, so no full size RGBA copy of the texture is made: the
+// decode, the swizzle of that copy and the first mip level each went over
+// all of it (most of the time of a TXD with the option on).
+static void
+dxtHalf(int32 dxt, const uint8 *src, int32 w, int32 h, bool coverage, uint8 *dst)
+{
+	dxtExpandInit();
+	int32 bsize = dxt == 1 ? 8 : 16;
+	int32 hw = w/2;
+	for(int32 by = 0; by < h; by += 4)
+		for(int32 bx = 0; bx < w; bx += 4, src += bsize){
+			const uint8 *cb = dxt == 1 ? src : src + 8;
+			uint64 lo, hi, a0 = 0, a1 = 0;
+			dxtColors(dxt, cb, &lo, &hi);
+			if(dxt != 1)
+				dxtAlphas(dxt, src, &a0, &a1);
+			uint32 idx = le32(cb+4);
+			for(int32 qy = 0; qy < 2; qy++)
+				for(int32 qx = 0; qx < 2; qx++){
+					// texels k (row*4 + column) of this quarter of the block
+					int32 k0 = qy*8 + qx*2;
+					uint32 v[4];
+					for(int32 n = 0; n < 4; n++){
+						int32 k = k0 + (n & 1) + (n >> 1)*4;
+						uint32 c = dxtPick(lo, hi, (idx >> (2*k)) & 3);
+						if(dxt != 1)
+							c = RGBA_SETA(c, ((k < 8 ? a0 : a1) >> ((k & 7)*8)) & 0xFF);
+						v[n] = c;
+					}
+					uint8 *d = dst + ((by/2 + qy)*hw + bx/2 + qx)*4;
+					uint32 al[4] = { RGBA_A(v[0]), RGBA_A(v[1]), RGBA_A(v[2]), RGBA_A(v[3]) };
+					if(!coverage || (al[0] & al[1] & al[2] & al[3]) == 255){
+						d[0] = (RGBA_R(v[0]) + RGBA_R(v[1]) + RGBA_R(v[2]) + RGBA_R(v[3]) + 2) >> 2;
+						d[1] = (RGBA_G(v[0]) + RGBA_G(v[1]) + RGBA_G(v[2]) + RGBA_G(v[3]) + 2) >> 2;
+						d[2] = (RGBA_B(v[0]) + RGBA_B(v[1]) + RGBA_B(v[2]) + RGBA_B(v[3]) + 2) >> 2;
+						d[3] = (al[0] + al[1] + al[2] + al[3] + 2) >> 2;
+						continue;
+					}
+					int32 asum = al[0] + al[1] + al[2] + al[3];
+					int32 amax = al[0];
+					for(int32 n = 1; n < 4; n++)
+						if((int32)al[n] > amax) amax = al[n];
+					if(asum > 0){
+						int32 r = 0, g = 0, b = 0;
+						for(int32 n = 0; n < 4; n++){
+							r += RGBA_R(v[n]) * al[n];
+							g += RGBA_G(v[n]) * al[n];
+							b += RGBA_B(v[n]) * al[n];
+						}
+						d[0] = (r + asum/2) / asum;
+						d[1] = (g + asum/2) / asum;
+						d[2] = (b + asum/2) / asum;
+					}else{
+						d[0] = (RGBA_R(v[0]) + RGBA_R(v[1]) + RGBA_R(v[2]) + RGBA_R(v[3]) + 2) >> 2;
+						d[1] = (RGBA_G(v[0]) + RGBA_G(v[1]) + RGBA_G(v[2]) + RGBA_G(v[3]) + 2) >> 2;
+						d[2] = (RGBA_B(v[0]) + RGBA_B(v[1]) + RGBA_B(v[2]) + RGBA_B(v[3]) + 2) >> 2;
+					}
+					d[3] = ((asum + 2)/4 + amax + 1) / 2;
+				}
+		}
+}
+
+// One level the game wrote (RGBA8 bytes or DXT blocks) into VRAM, and the
+// mip levels made from level 0 when the raster wants them
+static void
+convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx *cx)
+{
+	int32 w = levelDim(raster->originalWidth, level);
+	int32 h = levelDim(raster->originalHeight, level);
+	bool mips = level == 0 && natras->autogenMipmap && natras->numLevels > 1;
+	uint8 *rgba = src;
+	if(natras->isCompressed){
+		int32 dxt = natras->texFormat == PS3_TEX_DXT1 ? 1 :
+		            natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
+		if(mips){
+			// level 0 and level 1 straight from the blocks
+			if(uploadDXTDirect(raster, natras, 0, src, cx, true)){
+				uint8 *half = convBuf(cx, &cx->decoded, (w/2)*(h/2)*4);
+				if(half){
+					uint64 tm = texProfNow();
+					dxtHalf(dxt, src, w, h, natras->forcedMips, half);
+					texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
+					uploadLevel(raster, natras, 1, half, cx);
+					uploadMipChain(raster, natras, half, 1, cx);
+				}
+				return;
+			}
+		}else if(uploadDXTDirect(raster, natras, level, src, cx))
+			return;
+		// DXT decompressed here (linear and tiny levels: the RSX could take
+		// the blocks, but linear compressed textures don't repeat)
+		int32 dw = (w + 3) & ~3;
+		int32 dh = (h + 3) & ~3;
+		uint8 *decoded = convBuf(cx, &cx->decoded, dw*dh*4);
+		if(decoded == nil)
+			return;
+		uint64 td = texProfNow();
+		decodeDXT(dxt, decoded, dw, dh, src);
+		texProfile.us[TEXPROF_DXT] += texProfNow() - td;
+		if(dw != w || dh != h){
+			// tiny level: the top left corner
+			for(int32 y = 0; y < h; y++)
+				memmove(decoded + y*w*4, decoded + y*dw*4, w*4);
+		}
+		rgba = decoded;
+	}
+	uploadLevel(raster, natras, level, rgba, cx);
+	if(mips)
+		uploadMipChain(raster, natras, rgba, 0, cx);
+}
+
+// ---- the texture thread ---------------------------------------------------------
+// The PPU runs two threads at once and the game used one. The levels the
+// game writes into its textures (streaming: DXT decode, mip levels, swizzle,
+// the copy into VRAM) are converted by a second thread while the game
+// thread goes on with its frame (logic, audio, the render list). Before
+// the frame is drawn (camera beginUpdate) the game thread makes sure every
+// queued level is done, converting the ones still waiting itself: nothing
+// is ever drawn white or half written. A raster deleted with levels queued
+// waits for the one being converted and drops the others. Only new
+// textures go to the thread (nothing of them drawn yet); the rest, and
+// everything with USRDIR/notexthread.txt, as before on the game thread.
+
+bool texAsync = true;
+
+struct TexJob {
+	Raster *raster;
+	Ps3Raster *natras;
+	int32 level;
+	uint8 *src;		// the locked level (freed by the game thread)
+	uint32 texels;
+	volatile int32 state;
+	uint16 validBits;
+	TexJob *next;
+};
+enum { TJ_QUEUED, TJ_RUNNING, TJ_DONE, TJ_CANCELLED };
+
+static TexJob *tjHead;
+static sys_mutex_t tjMutex;
+static sys_cond_t tjWork, tjDone;
+static sys_ppu_thread_t tjThread;
+static volatile bool tjQuit;
+static bool tjOn;
+static volatile uint32 tjBacklog;	// texels queued or being converted
+static ConvCtx workerCtx = { {nil, 0}, {nil, 0}, {nil, 0}, {nil, 0}, false, true, 0 };
+static ConvCtx helpCtx = { {nil, 0}, {nil, 0}, {nil, 0}, {nil, 0}, true, true, 0 };
+
+uint32 textureBacklog(void) { return tjBacklog; }
+
+// the first queued level with no unfinished job of its raster before it
+// (level 0 picks the 16 bit format the others follow). Mutex held.
+static TexJob*
+tjPick(void)
+{
+	for(TexJob *j = tjHead; j; j = j->next){
+		if(j->state != TJ_QUEUED)
+			continue;
+		bool blocked = false;
+		for(TexJob *e = tjHead; e != j; e = e->next)
+			if(e->natras == j->natras && (e->state == TJ_QUEUED || e->state == TJ_RUNNING)){
+				blocked = true;
+				break;
+			}
+		if(!blocked)
+			return j;
+	}
+	return nil;
+}
+
+static bool
+tjBusy(void)
+{
+	for(TexJob *j = tjHead; j; j = j->next)
+		if(j->state == TJ_QUEUED || j->state == TJ_RUNNING)
+			return true;
+	return false;
+}
+
+// j is RUNNING (taken with the mutex held); called without it
+static void
+tjRun(TexJob *j, ConvCtx *cx)
+{
+	cx->validBits = 0;
+	convertLevel(j->raster, j->natras, j->level, j->src, cx);
+	sysMutexLock(tjMutex, 0);
+	j->validBits = cx->validBits;
+	j->state = TJ_DONE;
+	tjBacklog -= j->texels;
+	sysCondBroadcast(tjDone);
+	sysMutexUnlock(tjMutex);
+}
+
+// finished and dropped jobs: their levels usable, their buffers freed.
+// Game thread, mutex held.
+static void
+tjCollectLocked(void)
+{
+	TexJob **pp = &tjHead;
+	while(*pp){
+		TexJob *j = *pp;
+		if(j->state == TJ_DONE || j->state == TJ_CANCELLED){
+			if(j->state == TJ_DONE && j->validBits){
+				j->natras->validLevels |= j->validBits;
+				textureCacheTouched();
+			}
+			j->natras->pendingJobs--;
+			*pp = j->next;
+			rwFree(j->src);
+			free(j);
+		}else
+			pp = &j->next;
+	}
+}
+
+static void
+tjThreadMain(void *arg)
+{
+	(void)arg;
+	sysMutexLock(tjMutex, 0);
+	while(!tjQuit){
+		TexJob *j = tjPick();
+		if(j == nil){
+			sysCondWait(tjWork, 0);
+			continue;
+		}
+		j->state = TJ_RUNNING;
+		sysMutexUnlock(tjMutex);
+		tjRun(j, &workerCtx);
+		texProfile.asyncLevels++;
+		sysMutexLock(tjMutex, 0);
+	}
+	sysMutexUnlock(tjMutex);
+	sysThreadExit(0);
+}
+
+void
+textureJobsSync(void)
+{
+	if(!tjOn)
+		return;
+	sysMutexLock(tjMutex, 0);
+	if(tjHead){
+		uint64 t0 = texProfNow();
+		for(;;){
+			TexJob *j = tjPick();
+			if(j){
+				// the game thread takes it on instead of waiting
+				j->state = TJ_RUNNING;
+				sysMutexUnlock(tjMutex);
+				tjRun(j, &helpCtx);
+				texProfile.helpedLevels++;
+				sysMutexLock(tjMutex, 0);
+				continue;
+			}
+			if(!tjBusy())
+				break;
+			sysCondWait(tjDone, 0);
+		}
+		tjCollectLocked();
+		texProfile.syncWaitUs += texProfNow() - t0;
+	}
+	sysMutexUnlock(tjMutex);
+}
+
+static void
+tjCancelRaster(Ps3Raster *natras)
+{
+	if(!tjOn || natras->pendingJobs == 0)
+		return;
+	sysMutexLock(tjMutex, 0);
+	for(;;){
+		bool running = false;
+		for(TexJob *j = tjHead; j; j = j->next)
+			if(j->natras == natras){
+				if(j->state == TJ_QUEUED){
+					j->state = TJ_CANCELLED;
+					tjBacklog -= j->texels;
+				}else if(j->state == TJ_RUNNING)
+					running = true;
+			}
+		if(!running)
+			break;
+		sysCondWait(tjDone, 0);
+	}
+	tjCollectLocked();
+	sysMutexUnlock(tjMutex);
+}
+
+// what convertLevel needs for a level (scratch, decoded, each mip buffer)
+static void
+convNeeds(Raster *raster, Ps3Raster *natras, int32 level, uint32 *scr, uint32 *dec, uint32 *mip)
+{
+	int32 w = levelDim(raster->originalWidth, level);
+	int32 h = levelDim(raster->originalHeight, level);
+	*scr = w*h*4 + (w+h)*4 + 64;
+	*dec = natras->isCompressed ? ((w+3) & ~3)*((h+3) & ~3)*4 : 0;
+	*mip = level == 0 && natras->autogenMipmap && natras->numLevels > 1 ?
+		levelDim(w, 1)*levelDim(h, 1)*4 : 0;
+}
+
+static bool
+tjGrow(ConvBuf *b, uint32 need)
+{
+	if(need <= b->size)
+		return true;
+	need += need/4;
+	free(b->p);
+	b->p = (uint8*)malloc(need);
+	b->size = b->p ? need : 0;
+	return b->p != nil;
+}
+
+// true: the level is the texture thread's (and so is src)
+static bool
+texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src)
+{
+	if(!tjOn || raster->type != Raster::TEXTURE || natras->vram == nil || natras->validLevels != 0)
+		return false;
+	// a loading screen queues a whole island: the buffers waiting would
+	// take too much memory, the game thread catches up first
+	if(tjBacklog > 2000000)
+		textureJobsSync();
+	uint32 scr, dec, mip;
+	convNeeds(raster, natras, level, &scr, &dec, &mip);
+	if(scr > workerCtx.scratch.size || dec > workerCtx.decoded.size || mip > workerCtx.mipA.size){
+		// a bigger level than any before: the thread's buffers grow, with
+		// it idle
+		textureJobsSync();
+		if(!tjGrow(&workerCtx.scratch, scr) || !tjGrow(&workerCtx.decoded, dec) ||
+		   !tjGrow(&workerCtx.mipA, mip) || !tjGrow(&workerCtx.mipB, mip))
+			return false;
+	}
+	TexJob *j = (TexJob*)malloc(sizeof(TexJob));
+	if(j == nil)
+		return false;
+	int32 w = levelDim(raster->originalWidth, level);
+	int32 h = levelDim(raster->originalHeight, level);
+	j->raster = raster;
+	j->natras = natras;
+	j->level = level;
+	j->src = src;
+	j->texels = w*h + (mip ? w*h/3 : 0);
+	j->state = TJ_QUEUED;
+	j->validBits = 0;
+	j->next = nil;
+	natras->pendingJobs++;
+	sysMutexLock(tjMutex, 0);
+	tjCollectLocked();
+	TexJob **pp = &tjHead;
+	while(*pp)
+		pp = &(*pp)->next;
+	*pp = j;
+	tjBacklog += j->texels;
+	sysCondSignal(tjWork);
+	sysMutexUnlock(tjMutex);
+	return true;
+}
+
+static void
+tjStart(void)
+{
+	if(!texAsync || tjOn)
+		return;
+	sys_mutex_attr_t ma;
+	memset(&ma, 0, sizeof(ma));
+	ma.attr_protocol = SYS_MUTEX_PROTOCOL_PRIO;
+	ma.attr_recursive = SYS_MUTEX_ATTR_NOT_RECURSIVE;
+	ma.attr_pshared = SYS_MUTEX_ATTR_NOT_PSHARED;
+	ma.attr_adaptive = SYS_MUTEX_ATTR_NOT_ADAPTIVE;
+	strncpy(ma.name, "rwtex", sizeof(ma.name)-1);
+	if(sysMutexCreate(&tjMutex, &ma) != 0){
+		rsxLog("[rsx] texture thread: no mutex, textures on the game thread");
+		return;
+	}
+	sys_cond_attr_t ca;
+	sysCondAttrInitialize(ca);
+	if(sysCondCreate(&tjWork, tjMutex, &ca) != 0 || sysCondCreate(&tjDone, tjMutex, &ca) != 0){
+		rsxLog("[rsx] texture thread: no condition variables, textures on the game thread");
+		return;
+	}
+	// below the game thread (1000): it never takes the game thread's turn
+	tjQuit = false;
+	if(sysThreadCreate(&tjThread, tjThreadMain, NULL, 1100, 64*1024, THREAD_JOINABLE, (char*)"rwtexconv") != 0){
+		rsxLog("[rsx] texture thread: not created, textures on the game thread");
+		return;
+	}
+	// buffers for a 512x512 level with its mip levels; bigger ones grow them
+	tjGrow(&workerCtx.scratch, 512*512*4 + 4096 + 64);
+	tjGrow(&workerCtx.decoded, 512*512*4);
+	tjGrow(&workerCtx.mipA, 256*256*4);
+	tjGrow(&workerCtx.mipB, 256*256*4);
+	tjOn = true;
+	rsxLog("[rsx] texture thread on (USRDIR/notexthread.txt turns it off)");
+}
+
+static void
+tjStop(void)
+{
+	if(!tjOn)
+		return;
+	textureJobsSync();
+	sysMutexLock(tjMutex, 0);
+	tjQuit = true;
+	sysCondSignal(tjWork);
+	sysMutexUnlock(tjMutex);
+	u64 rv;
+	sysThreadJoin(tjThread, &rv);
+	sysCondDestroy(tjWork);
+	sysCondDestroy(tjDone);
+	sysMutexDestroy(tjMutex);
+	convFree(&workerCtx);
+	convFree(&helpCtx);
+	tjOn = false;
+}
+
 static uint8*
 lockTexture(Raster *raster, Ps3Raster *natras, int32 level, int32 lockMode)
 {
@@ -996,6 +1460,8 @@ lockTexture(Raster *raster, Ps3Raster *natras, int32 level, int32 lockMode)
 	// throws it away; a nil lock is a crash in librw's converters
 	if(level < 0 || level >= 16)
 		return nil;
+	if(natras->pendingJobs && (lockMode & Raster::LOCKREAD))
+		textureJobsSync();	// reading a level still being converted (the game hardly ever reads)
 	if(natras->staging){
 		rwFree(natras->staging);
 		natras->staging = nil;
@@ -1036,48 +1502,14 @@ unlockTexture(Raster *raster, Ps3Raster *natras, int32 level)
 	if(natras->staging == nil)
 		return;
 	if((raster->privateFlags & Raster::LOCKWRITE) && level < natras->numLevels){
-		uint8 *rgba = natras->staging;
-		Image *img = nil;
-		int32 w = levelDim(raster->originalWidth, level);
-		int32 h = levelDim(raster->originalHeight, level);
-		uint8 *decoded = nil;
-		if(natras->isCompressed && uploadDXTDirect(raster, natras, level, natras->staging)){
-			natras->serial++;
-			rwFree(natras->staging);
+		natras->serial++;
+		if(texJobQueue(raster, natras, level, natras->staging)){
+			// the texture thread converts it and frees the buffer
 			natras->staging = nil;
 			natras->lockedLevel = -1;
 			return;
 		}
-		if(natras->isCompressed){
-			// DXT: decompressed here (the RSX could take the blocks, but
-			// linear compressed textures don't repeat)
-			int32 dw = (w + 3) & ~3;
-			int32 dh = (h + 3) & ~3;
-			decoded = (uint8*)rwMalloc(dw*dh*4, MEMDUR_EVENT | ID_DRIVER);
-			if(decoded == nil){
-				rwFree(natras->staging);
-				natras->staging = nil;
-				natras->lockedLevel = -1;
-				return;
-			}
-			int dxt = natras->texFormat == PS3_TEX_DXT1 ? 1 :
-			          natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
-			uint64 td = texProfNow();
-			decodeDXT(dxt, decoded, dw, dh, natras->staging);
-			texProfile.us[TEXPROF_DXT] += texProfNow() - td;
-			if(dw != w || dh != h){
-				// tiny level: the top left corner
-				for(int32 y = 0; y < h; y++)
-					memmove(decoded + y*w*4, decoded + y*dw*4, w*4);
-			}
-			rgba = decoded;
-		}
-		uploadLevel(raster, natras, level, rgba);
-		if(level == 0 && natras->autogenMipmap && natras->numLevels > 1)
-			uploadMipChain(raster, natras, rgba);
-		if(decoded)
-			rwFree(decoded);
-		natras->serial++;
+		convertLevel(raster, natras, level, natras->staging, &mainCtx);
 	}
 	rwFree(natras->staging);
 	natras->staging = nil;
@@ -1235,6 +1667,7 @@ rasterInitRSX(void)
 			memset(px, 0xFF, 2*2*4);
 		white->unlock(0);
 	}
+	tjStart();
 }
 
 void
@@ -1244,9 +1677,8 @@ rasterShutdownRSX(void)
 		white->destroy();
 		white = nil;
 	}
-	free(scratch);
-	scratch = nil;
-	scratchSize = 0;
+	tjStop();
+	convFree(&mainCtx);
 }
 
 
@@ -1266,7 +1698,7 @@ uploadIndexedLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *
 		return;
 	if(natras->swizzled){
 		uint32 bytes = w*h*4;
-		uint8 *buf = getScratch(bytes + (w+h)*4);
+		uint8 *buf = getScratch(&mainCtx, bytes + (w+h)*4);
 		if(buf == nil)
 			return;
 		uint32 *pix = (uint32*)buf;
@@ -1277,7 +1709,7 @@ uploadIndexedLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *
 		memcpy(natras->vram + natras->levelOffset[level], pix, bytes);
 		vramFlush(natras->vram + natras->levelOffset[level], bytes);
 	}else{
-		uint32 *row = (uint32*)getScratch(w*4);
+		uint32 *row = (uint32*)getScratch(&mainCtx, w*4);
 		if(row == nil)
 			return;
 		for(int32 y = 0; y < h; y++){
@@ -1377,7 +1809,7 @@ readPalettedD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 
 					uint32 c = pal[data[k]];
 					rgba[k*4+0] = c>>16; rgba[k*4+1] = c>>8; rgba[k*4+2] = c; rgba[k*4+3] = c>>24;
 				}
-				uploadMipChain(ras, pn, rgba);
+				uploadMipChain(ras, pn, rgba, 0, &mainCtx);
 				rwFree(rgba);
 			}
 		}

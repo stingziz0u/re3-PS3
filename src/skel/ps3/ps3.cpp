@@ -815,6 +815,16 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] DXT1 textures in VRAM: %s", rw::ps3::dxt1As16 ? "16 bit (dxt32.txt: 32 bit)" : "32 bit (dxt32.txt)");
 	}
+	// patch 48: textures converted on a second PPU thread. If that ever
+	// shows a wrong texture: an empty USRDIR/notexthread.txt, as before
+	{
+		FILE *tt = fopen(PS3_USRDIR "/notexthread.txt", "rb");
+		if (tt) {
+			fclose(tt);
+			rw::ps3::texAsync = false;
+		}
+		PS3_Logf("[5] texture thread: %s", rw::ps3::texAsync ? "on (notexthread.txt turns it off)" : "OFF (notexthread.txt)");
+	}
 #endif
 
 	openParams.width = PS3_SCREEN_WIDTH;
