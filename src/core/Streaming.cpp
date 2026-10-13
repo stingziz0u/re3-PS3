@@ -1846,9 +1846,9 @@ CStreaming::RequestModelStream(int32 ch)
 // frame doesn't convert four big TXDs in a row (the hitches when new areas
 // stream in). Loading screens and FlushChannels convert everything at once.
 static bool ps3StreamBudget;
-// texels the texture thread can convert in ~8 ms (reVC-PS3's stress log:
-// ~30 ns a texel with mip levels)
-#define PS3_TEX_BACKLOG_MAX 256000
+// texels the texture thread converts in ~12 ms (~80 ns a texel with mip
+// levels while the game thread runs too: the stress test of patch 36)
+#define PS3_TEX_BACKLOG_MAX 160000
 namespace rw { namespace ps3 { uint32 textureBacklog(void); } }
 #endif
 
@@ -1910,7 +1910,7 @@ CStreaming::ProcessLoadingChannel(int32 ch)
 					ms_channel[ch].streamIds[i] = -1;
 			}
 #ifdef __PS3__
-			// (patch 48) or the texture thread has ~8 ms of work queued
+			// (patch 48) or the texture thread has ~12 ms of work queued
 			if(ps3StreamBudget && ms_channel[ch].state != CHANNELSTATE_STARTED &&
 			   (CTimer::GetCurrentTimeInCycles() - ps3Start > 4 * CTimer::GetCyclesPerMillisecond() ||
 			    rw::ps3::textureBacklog() > PS3_TEX_BACKLOG_MAX)){

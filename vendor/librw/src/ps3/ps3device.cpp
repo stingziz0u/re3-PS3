@@ -1494,8 +1494,9 @@ static void
 beginUpdate(Camera *cam)
 {
 	float view[16], proj[16];
-	// the textures the texture thread is converting: done before any draw
-	textureJobsSync();
+	// the textures the texture thread finished: usable (one still queued
+	// is finished when a draw binds it, rasterBindInfo)
+	textureJobsCollect();
 	if(resyncEachFrame)
 		forgetHardwareState();
 	// View Matrix

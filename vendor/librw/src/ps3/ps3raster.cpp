@@ -241,6 +241,7 @@ downsampleRGBA8(uint8 *dst, int32 dw, int32 dh, uint8 *src, int32 sw, int32 sh)
 bool texAsync = false;	// no texture thread without the RSX
 uint32 textureBacklog(void) { return 0; }
 void textureJobsSync(void) { }
+void textureJobsCollect(void) { }
 
 static bool
 allocateTexels(Raster *raster, Ps3Raster *natras)
@@ -1041,12 +1042,24 @@ readbackLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 // by dxtToSwizzled, so no full size RGBA copy of the texture is made: the
 // decode, the swizzle of that copy and the first mip level each went over
 // all of it (most of the time of a TXD with the option on).
+// the rounded average of four RGBA words, byte by byte (two bytes per
+// 16 bit lane: no carries between them)
+static inline uint32
+avg4(uint32 a, uint32 b, uint32 c, uint32 d)
+{
+	uint32 lo = (a & 0x00FF00FFu) + (b & 0x00FF00FFu) + (c & 0x00FF00FFu) + (d & 0x00FF00FFu) + 0x00020002u;
+	uint32 hi = ((a >> 8) & 0x00FF00FFu) + ((b >> 8) & 0x00FF00FFu) + ((c >> 8) & 0x00FF00FFu) +
+	            ((d >> 8) & 0x00FF00FFu) + 0x00020002u;
+	return ((lo >> 2) & 0x00FF00FFu) | (((hi >> 2) & 0x00FF00FFu) << 8);
+}
+
 static void
 dxtHalf(int32 dxt, const uint8 *src, int32 w, int32 h, bool coverage, uint8 *dst)
 {
 	dxtExpandInit();
 	int32 bsize = dxt == 1 ? 8 : 16;
 	int32 hw = w/2;
+	uint32 *d32 = (uint32*)dst;	// RGBA bytes, as PACK_RGBA words
 	for(int32 by = 0; by < h; by += 4)
 		for(int32 bx = 0; bx < w; bx += 4, src += bsize){
 			const uint8 *cb = dxt == 1 ? src : src + 8;
@@ -1055,47 +1068,45 @@ dxtHalf(int32 dxt, const uint8 *src, int32 w, int32 h, bool coverage, uint8 *dst
 			if(dxt != 1)
 				dxtAlphas(dxt, src, &a0, &a1);
 			uint32 idx = le32(cb+4);
+			uint32 *row = d32 + (by/2)*hw + bx/2;
 			for(int32 qy = 0; qy < 2; qy++)
 				for(int32 qx = 0; qx < 2; qx++){
 					// texels k (row*4 + column) of this quarter of the block
 					int32 k0 = qy*8 + qx*2;
-					uint32 v[4];
-					for(int32 n = 0; n < 4; n++){
-						int32 k = k0 + (n & 1) + (n >> 1)*4;
-						uint32 c = dxtPick(lo, hi, (idx >> (2*k)) & 3);
-						if(dxt != 1)
-							c = RGBA_SETA(c, ((k < 8 ? a0 : a1) >> ((k & 7)*8)) & 0xFF);
-						v[n] = c;
+					uint32 v0 = dxtPick(lo, hi, (idx >> (2*k0)) & 3);
+					uint32 v1 = dxtPick(lo, hi, (idx >> (2*k0 + 2)) & 3);
+					uint32 v2 = dxtPick(lo, hi, (idx >> (2*k0 + 8)) & 3);
+					uint32 v3 = dxtPick(lo, hi, (idx >> (2*k0 + 10)) & 3);
+					if(dxt != 1){
+						uint64 ar = qy ? a1 : a0;	// texels 0-7 / 8-15
+						int32 s = (k0 & 7)*8;
+						v0 = RGBA_SETA(v0, (ar >> s) & 0xFF);
+						v1 = RGBA_SETA(v1, (ar >> (s + 8)) & 0xFF);
+						v2 = RGBA_SETA(v2, (ar >> (s + 32)) & 0xFF);
+						v3 = RGBA_SETA(v3, (ar >> (s + 40)) & 0xFF);
 					}
-					uint8 *d = dst + ((by/2 + qy)*hw + bx/2 + qx)*4;
-					uint32 al[4] = { RGBA_A(v[0]), RGBA_A(v[1]), RGBA_A(v[2]), RGBA_A(v[3]) };
-					if(!coverage || (al[0] & al[1] & al[2] & al[3]) == 255){
-						d[0] = (RGBA_R(v[0]) + RGBA_R(v[1]) + RGBA_R(v[2]) + RGBA_R(v[3]) + 2) >> 2;
-						d[1] = (RGBA_G(v[0]) + RGBA_G(v[1]) + RGBA_G(v[2]) + RGBA_G(v[3]) + 2) >> 2;
-						d[2] = (RGBA_B(v[0]) + RGBA_B(v[1]) + RGBA_B(v[2]) + RGBA_B(v[3]) + 2) >> 2;
-						d[3] = (al[0] + al[1] + al[2] + al[3] + 2) >> 2;
+					uint32 *d = row + qy*hw + qx;
+					if(!coverage || RGBA_A(v0 & v1 & v2 & v3) == 255){
+						*d = avg4(v0, v1, v2, v3);
 						continue;
 					}
-					int32 asum = al[0] + al[1] + al[2] + al[3];
-					int32 amax = al[0];
-					for(int32 n = 1; n < 4; n++)
-						if((int32)al[n] > amax) amax = al[n];
-					if(asum > 0){
-						int32 r = 0, g = 0, b = 0;
-						for(int32 n = 0; n < 4; n++){
-							r += RGBA_R(v[n]) * al[n];
-							g += RGBA_G(v[n]) * al[n];
-							b += RGBA_B(v[n]) * al[n];
-						}
-						d[0] = (r + asum/2) / asum;
-						d[1] = (g + asum/2) / asum;
-						d[2] = (b + asum/2) / asum;
-					}else{
-						d[0] = (RGBA_R(v[0]) + RGBA_R(v[1]) + RGBA_R(v[2]) + RGBA_R(v[3]) + 2) >> 2;
-						d[1] = (RGBA_G(v[0]) + RGBA_G(v[1]) + RGBA_G(v[2]) + RGBA_G(v[3]) + 2) >> 2;
-						d[2] = (RGBA_B(v[0]) + RGBA_B(v[1]) + RGBA_B(v[2]) + RGBA_B(v[3]) + 2) >> 2;
+					// alpha weighted colour, alpha halfway to the largest
+					uint32 v[4] = { v0, v1, v2, v3 };
+					int32 asum = 0, amax = 0, r = 0, g = 0, b = 0;
+					for(int32 n = 0; n < 4; n++){
+						int32 a = RGBA_A(v[n]);
+						asum += a;
+						if(a > amax) amax = a;
+						r += RGBA_R(v[n]) * a;
+						g += RGBA_G(v[n]) * a;
+						b += RGBA_B(v[n]) * a;
 					}
-					d[3] = ((asum + 2)/4 + amax + 1) / 2;
+					uint32 c;
+					if(asum > 0)
+						c = PACK_RGBA((r + asum/2) / asum, (g + asum/2) / asum, (b + asum/2) / asum, 0);
+					else
+						c = RGBA_SETA(avg4(v0, v1, v2, v3), 0);
+					*d = RGBA_SETA(c, ((asum + 2)/4 + amax + 1) / 2);
 				}
 		}
 }
@@ -1153,10 +1164,12 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 // The PPU runs two threads at once and the game used one. The levels the
 // game writes into its textures (streaming: DXT decode, mip levels, swizzle,
 // the copy into VRAM) are converted by a second thread while the game
-// thread goes on with its frame (logic, audio, the render list). Before
-// the frame is drawn (camera beginUpdate) the game thread makes sure every
-// queued level is done, converting the ones still waiting itself: nothing
-// is ever drawn white or half written. A raster deleted with levels queued
+// thread goes on with its frame (logic, audio, the render list, the
+// draws). A texture still queued when a draw binds it is finished first,
+// the game thread converting its levels itself if the thread hasn't got
+// to them: nothing is ever drawn white or half written. (Patch 36 waited
+// for all of them at the start of the frame's drawing: the game thread
+// did a third of them itself, ~1 ms a frame in the flights.) A raster deleted with levels queued
 // waits for the one being converted and drops the others. Only new
 // textures go to the thread (nothing of them drawn yet); the rest, and
 // everything with USRDIR/notexthread.txt, as before on the game thread.
@@ -1299,6 +1312,49 @@ textureJobsSync(void)
 		tjCollectLocked();
 		texProfile.syncWaitUs += texProfNow() - t0;
 	}
+	sysMutexUnlock(tjMutex);
+}
+
+// the levels of one raster, before a draw binds it (rasterBindInfo)
+static void
+tjWaitRaster(Ps3Raster *natras)
+{
+	if(!tjOn || natras->pendingJobs == 0)
+		return;
+	uint64 t0 = texProfNow();
+	sysMutexLock(tjMutex, 0);
+	for(;;){
+		// its first unfinished level (the levels of a raster go in order)
+		TexJob *first = nil;
+		for(TexJob *j = tjHead; j; j = j->next)
+			if(j->natras == natras && (j->state == TJ_QUEUED || j->state == TJ_RUNNING)){
+				first = j;
+				break;
+			}
+		if(first == nil)
+			break;
+		if(first->state == TJ_QUEUED){
+			first->state = TJ_RUNNING;
+			sysMutexUnlock(tjMutex);
+			tjRun(first, &helpCtx);
+			texProfile.helpedLevels++;
+			sysMutexLock(tjMutex, 0);
+		}else
+			sysCondWait(tjDone, 0);
+	}
+	tjCollectLocked();
+	sysMutexUnlock(tjMutex);
+	texProfile.syncWaitUs += texProfNow() - t0;
+}
+
+// the finished levels usable, without waiting for the others (camera begin)
+void
+textureJobsCollect(void)
+{
+	if(!tjOn)
+		return;
+	sysMutexLock(tjMutex, 0);
+	tjCollectLocked();
 	sysMutexUnlock(tjMutex);
 }
 
@@ -1547,6 +1603,8 @@ void
 rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels)
 {
 	Ps3Raster *natras = GETPS3RASTEREXT(raster->parent);
+	if(natras->pendingJobs)
+		tjWaitRaster(natras);	// levels the texture thread hasn't finished
 	int32 n = 0;
 	while(n < natras->numLevels && (natras->validLevels & (1<<n)))
 		n++;

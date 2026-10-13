@@ -151,8 +151,10 @@ extern bool texAsync;		// textures converted on a second PPU thread (default on;
 // texels the texture thread still has to convert (the game's streaming
 // stops loading more in a frame while this is high); 0 in stage 1
 uint32 textureBacklog(void);
-// every queued texture converted and usable (before a frame is drawn)
+// every queued texture converted and usable
 void textureJobsSync(void);
+// the finished ones usable, without waiting (the others wait for a draw)
+void textureJobsCollect(void);
 // Graphics menu (the game sets these every frame):
 extern bool forceMipmaps;	// textures loaded without mip levels get them (made on the CPU)
 extern int32 texFilterMode;	// 3D textures: 0 the game's filter, 1 bilinear, 2 trilinear
