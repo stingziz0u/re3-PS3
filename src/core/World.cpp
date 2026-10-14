@@ -88,7 +88,15 @@ CWorld::Remove(CEntity *ent)
 
 	if(ent->IsBuilding() || ent->IsDummy()) return;
 
+#ifdef __PS3__
+	// a static entity can still be in the moving list (CWorld::Process takes
+	// it out after its ProcessControl): deleted before that, its node stayed
+	// and the next frame processed a freed object (reVC-PS3, mission
+	// cub3: the game thread died). RemoveFromMovingList checks the node.
+	((CPhysical *)ent)->RemoveFromMovingList();
+#else
 	if(!ent->GetIsStatic()) ((CPhysical *)ent)->RemoveFromMovingList();
+#endif
 }
 
 void
@@ -1837,10 +1845,46 @@ CWorld::RemoveStaticObjects()
 	}
 }
 
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+// Nodes of the moving list whose entity was deleted without leaving it (or
+// whose pool slot holds another entity now): dropped before anything uses
+// them, and logged. One pool check per moving entity a frame.
+static void
+PS3_SweepMovingList(void)
+{
+	CPtrNode *next;
+	for(CPtrNode *node = CWorld::GetMovingEntityList().first; node; node = next){
+		next = node->next;
+		CPhysical *e = (CPhysical *)node->item;
+		int idx = -1;
+		bool isFree = true;
+		const char *pool = "no pool";
+		if(CPools::GetPedPool()->PS3_Owns(e, &idx, &isFree)) pool = "ped";
+		else if(CPools::GetVehiclePool()->PS3_Owns(e, &idx, &isFree)) pool = "vehicle";
+		else if(CPools::GetObjectPool()->PS3_Owns(e, &idx, &isFree)) pool = "object";
+		else isFree = true;
+		if(!isFree && e->m_movingListNode == node)
+			continue;
+		static int logged;
+		if(logged < 16){
+			logged++;
+			PS3_Logf("[world] moving list: %p (%s slot %d, %s) isn't a live entity there: dropped",
+			         e, pool, idx, isFree ? "free" : "another entity's node");
+		}
+		PS3_CRUMB("world: stale moving list node dropped, slot", idx);
+		CWorld::GetMovingEntityList().DeleteNode(node);
+	}
+}
+#endif
+
 void
 CWorld::Process(void)
 {
 	if(!(CTimer::GetFrameCounter() & 63)) CReferences::PruneAllReferencesInWorld();
+#ifdef __PS3__
+	PS3_SweepMovingList();
+#endif
 
 	if(bProcessCutsceneOnly) {
 		for(int i = 0; i < NUMCUTSCENEOBJECTS; i++) {

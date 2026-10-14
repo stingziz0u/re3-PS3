@@ -1066,8 +1066,15 @@ main(int argc, char *argv[])
 	// -1 without an [8] line = the game thread died (crash) right after the
 	// last line above
 	PS3_Logf("exit code %d (join 0x%08x)", (int)retval, (unsigned)ret);
-	if ((int)retval != 0)
+	if ((int)retval != 0) {
 		PS3_DumpCrumbs();
+		PS3_Log("[crash] back to the XMB");
+		PS3_LogShutdown();
+		// straight out: returning from main ran the C runtime's exit (static
+		// destructors, stdio) with the audio and texture threads still going,
+		// and the console stayed there, the music playing (reVC-PS3 patch 36)
+		sysProcessExit((int)retval);
+	}
 	PS3_LogShutdown();
 	return (int)retval;
 }

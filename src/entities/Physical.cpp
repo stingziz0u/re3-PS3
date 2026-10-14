@@ -77,6 +77,10 @@ CPhysical::CPhysical(void)
 CPhysical::~CPhysical(void)
 {
 	m_entryInfoList.Flush();
+#ifdef __PS3__
+	// deleted without CWorld::Remove: out of the moving list all the same
+	RemoveFromMovingList();
+#endif
 }
 
 void
