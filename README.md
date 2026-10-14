@@ -47,8 +47,10 @@ PlayStation button icons and the controller picture of the settings page).
   safehouse, Ammu-Nation, Pay 'n' Spray and bomb shop, waypoints with X.
 - **MP3 player radio**: put `.mp3` files in `USRDIR/mp3`.
 - **Skins**: put `.bmp` skins in `USRDIR/skins`, choose them in *Player setup*.
-- DXT1 textures (most of the PC game's) are kept in 16 bits in video memory:
-  half the VRAM, the same look.
+- DXT textures (most of the PC game's) stay compressed in video memory and
+  the RSX reads them as they are: 4 times less VRAM than converted, and
+  nothing to convert when an area streams in. Mip levels made on the CPU use
+  AltiVec.
 - *Options > Graphics*:
   - **Mipmaps**: textures that come without smaller versions get them (less
     shimmering in the distance). They are made as textures load: restart
@@ -97,9 +99,10 @@ Anything made for the PC version of GTA III as data files works:
 - Data files (`handling.cfg`, `carcols.dat`, `timecyc.dat`, `gta3.dat`...)
   and a modified `main.scm`.
 
-Limits: on the PS3 DXT1 textures take 2 bytes per pixel and every other
-texture 4 (uncompressed) in the RSX's 216 MB, so a pack that raises *everything* to 1024×1024 can run
-out of video memory (models get dropped, textures turn white). The largest
+Limits: on the PS3 DXT textures (power of two sizes) stay compressed, as on
+the PC, and every other texture takes 4 bytes per pixel (uncompressed) in
+the RSX's 216 MB, so a pack of uncompressed textures that raises
+*everything* to 1024×1024 can run out of video memory (models get dropped, textures turn white). The largest
 texture size is 4096×4096. Code mods (CLEO, ASI, plugins that patch the
 executable) and unconverted assets from other games or platforms don't work.
 
@@ -109,10 +112,12 @@ executable) and unconverted assets from other games or platforms don't work.
   Send it with any report: it says what the game was doing when it crashed.
 - A black screen at start: create an empty `USRDIR/notiles.txt` (turns off
   the tiled buffers), and report it.
-- A texture that looks wrong: create an empty `USRDIR/dxt32.txt` (DXT1
-  textures back to 32 bits), and report it. If that isn't it, an empty
-  `USRDIR/notexthread.txt` converts the textures on the game's own thread
-  again (they are converted on a second PPU thread), and report it.
+- A texture that looks wrong: create an empty `USRDIR/nodxt.txt` (DXT
+  textures converted on the CPU, as before), and report it. If that
+  isn't it, an empty `USRDIR/notexthread.txt` converts the textures on the
+  game's own thread again (they are converted on a second PPU thread);
+  `USRDIR/novmx.txt` makes the mip levels without AltiVec; and
+  `USRDIR/dxt32.txt` keeps converted DXT1 textures in 32 bits instead of 16.
 - `USRDIR/autotest.txt` runs an automatic test while you watch (load a save
   outdoors first). One line in it chooses the test: nothing (weather, a
   flight over the islands, save/load, side missions, garages), `mode=full`

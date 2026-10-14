@@ -815,6 +815,22 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] DXT1 textures in VRAM: %s", rw::ps3::dxt1As16 ? "16 bit (dxt32.txt: 32 bit)" : "32 bit (dxt32.txt)");
 	}
+	// patch 52 (reVC-PS3 41-42): DXT textures stay DXT in VRAM (the RSX samples them), and the
+	// mip levels are made with AltiVec. nodxt.txt / novmx.txt: as before
+	{
+		FILE *nd = fopen(PS3_USRDIR "/nodxt.txt", "rb");
+		if (nd) {
+			fclose(nd);
+			rw::ps3::dxtNative = false;
+		}
+		PS3_Logf("[5] DXT textures in VRAM: %s", rw::ps3::dxtNative ? "native DXT (nodxt.txt turns it off)" : "converted (nodxt.txt)");
+		FILE *nv = fopen(PS3_USRDIR "/novmx.txt", "rb");
+		if (nv) {
+			fclose(nv);
+			rw::ps3::vmxMips = false;
+		}
+		PS3_Logf("[5] mip levels: %s", rw::ps3::vmxMips ? "AltiVec (novmx.txt turns it off)" : "scalar (novmx.txt)");
+	}
 	// patch 48: textures converted on a second PPU thread. If that ever
 	// shows a wrong texture: an empty USRDIR/notexthread.txt, as before
 	{
@@ -842,6 +858,16 @@ PS3_GameMain(void)
 	PS3_Logf("[6] RenderWare up: %dx%d", RsGlobal.maximumWidth, RsGlobal.maximumHeight);
 #if PS3_STAGE != 1
 	// PS3_SelfTest("boot");	// patch 18 and before; the menus are fixed
+	// patch 52 (reVC-PS3 40): an empty USRDIR/probe.txt tries native DXT, textures in
+	// main memory and AltiVec on this console ([probe] lines), then boots on
+	{
+		FILE *pf = fopen(PS3_USRDIR "/probe.txt", "rb");
+		if (pf) {
+			fclose(pf);
+			rw::ps3::hwProbe();
+			PS3_LogSync();
+		}
+	}
 #endif
 
 	psPostRWinit();

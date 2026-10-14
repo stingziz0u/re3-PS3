@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <malloc.h>
 
 #include "../rwbase.h"
 #include "../rwerror.h"
@@ -1957,6 +1958,442 @@ selfTest(const char *tag, Raster *font)
 	frm->destroy();
 	engine->currentCamera = prev;
 	forgetHardwareState();
+}
+
+// ---- hardware probe (USRDIR/probe.txt) ----------------------------------------------
+//
+// Before going for them: (1) the RSX sampling DXT blocks itself (no decode,
+// 4-8x less VRAM), (2) textures in main memory (XDR) and (3) the PPU's
+// AltiVec. Each is tried here, at boot, on known data, read back and
+// compared with what it must give; and timed. "[probe]" lines.
+
+extern "C" int ps3VmxProbe(char *out, int size);	// ps3vmx.cpp (built with -maltivec)
+
+static Camera*
+probeCamera(int32 w, int32 h)
+{
+	Frame *frm = Frame::create();
+	Camera *cam = Camera::create();
+	if(frm == nil || cam == nil)
+		return nil;
+	cam->setFrame(frm);
+	cam->setNearPlane(0.9f);
+	cam->setFarPlane(1000.0f);
+	cam->frameBuffer = Raster::create(w, h, 32, Raster::CAMERA, PLATFORM_PS3);
+	cam->zBuffer = Raster::create(w, h, 32, Raster::ZBUFFER, PLATFORM_PS3);
+	if(cam->frameBuffer == nil || cam->zBuffer == nil)
+		return nil;
+	return cam;
+}
+
+static void
+probeCameraDestroy(Camera *cam)
+{
+	if(cam == nil)
+		return;
+	Frame *frm = cam->getFrame();
+	if(cam->frameBuffer) cam->frameBuffer->destroy();
+	if(cam->zBuffer) cam->zBuffer->destroy();
+	cam->frameBuffer = nil;
+	cam->zBuffer = nil;
+	cam->setFrame(nil);
+	cam->destroy();
+	if(frm) frm->destroy();
+}
+
+static void
+probeBegin(Camera *cam, int32 filter)
+{
+	RGBA blue = { 0, 0, 255, 255 };
+	cam->beginUpdate();
+	cam->clear(&blue, Camera::CLEARIMAGE | Camera::CLEARZ);
+	SetRenderState(FOGENABLE, 0);
+	SetRenderState(CULLMODE, CULLNONE);
+	SetRenderState(ZTESTENABLE, 0);
+	SetRenderState(ZWRITEENABLE, 0);
+	SetRenderState(VERTEXALPHA, 1);
+	SetRenderState(SRCBLEND, BLENDONE);	// the texel as it is, alpha included
+	SetRenderState(DESTBLEND, BLENDZERO);
+	SetRenderState(ALPHATESTFUNC, ALPHAGREATEREQUAL);
+	SetRenderState(ALPHATESTREF, 0);
+	SetRenderState(TEXTUREFILTER, filter);
+	SetRenderState(TEXTUREADDRESS, Texture::WRAP);
+}
+
+// the whole target, the texture repeated twice each way (a quarter texel
+// in, so a sample never sits on a texel edge)
+static void
+probeQuad(Camera *cam, Raster *tex, int32 w, int32 h, float reps)
+{
+	Im2DVertex v[4];
+	float z = im2d::GetNearZ();
+	float rz = 1.0f/cam->nearPlane;
+	float X[4] = { 0, 0, (float)w, (float)w }, Y[4] = { 0, (float)h, (float)h, 0 };
+	float o = 0.25f/64.0f;
+	float U[4] = { o, o, reps+o, reps+o }, V[4] = { o, reps+o, reps+o, o };
+	for(int i = 0; i < 4; i++){
+		v[i].setScreenX(X[i]);
+		v[i].setScreenY(Y[i]);
+		v[i].setScreenZ(z);
+		v[i].setCameraZ(cam->nearPlane);
+		v[i].setRecipCameraZ(rz);
+		v[i].setColor(255, 255, 255, 255);
+		v[i].setU(U[i], rz);
+		v[i].setV(V[i], rz);
+	}
+	SetRenderStatePtr(TEXTURERASTER, tex);
+	im2d::RenderPrimitive(PRIMTYPETRIFAN, v, 4);
+}
+
+// share of the 64x64 picture that is the expected one (64x64 texture drawn
+// twice each way: pixel x shows texel (2x+1) mod 64), per channel within tol
+static int
+probeMatch(Camera *cam, const uint8 *texRGBA, bool withAlpha, int tol)
+{
+	uint8 *px = cam->frameBuffer->lock(0, Raster::LOCKREAD);
+	if(px == nil)
+		return -1;
+	int good = 0;
+	for(int y = 0; y < 64; y++)
+		for(int x = 0; x < 64; x++){
+			const uint8 *e = texRGBA + (((2*y+1) & 63)*64 + ((2*x+1) & 63))*4;
+			const uint8 *g = px + (y*64 + x)*4;
+			bool ok = true;
+			for(int k = 0; k < (withAlpha ? 4 : 3); k++)
+				if(abs((int)e[k] - (int)g[k]) > tol)
+					ok = false;
+			good += ok;
+		}
+	cam->frameBuffer->unlock(0);
+	return good*100/(64*64);
+}
+
+static inline uint16
+rgb565(int r, int g, int b)
+{
+	return (uint16)((r>>3)<<11 | (g>>2)<<5 | b>>3);
+}
+
+// 64x64 test DXT: every block its own colour (block order), col1 its
+// inverse, texels in 2x2 groups alternating col0/col1 (the indices); DXT5:
+// alpha 255/0 in columns of 2 texels. Little-endian as on the PC.
+static void
+probeMakeDXT(int32 dxt, int32 w, int32 h, uint8 *out)
+{
+	int bs = dxt == 1 ? 8 : 16;
+	for(int by = 0; by < h/4; by++)
+		for(int bx = 0; bx < w/4; bx++){
+			uint8 *b = out + (by*(w/4) + bx)*bs;
+			uint8 *cb = b;
+			if(dxt == 5){
+				b[0] = 255; b[1] = 0;	// a0 > a1: 8 alphas, index 0 = 255, 1 = 0
+				uint64 bits = 0;
+				for(int k = 0; k < 16; k++)
+					bits |= (uint64)(((k & 3) >> 1) & 1) << (3*k);	// columns 0,1: 255, 2,3: 0
+				for(int i = 0; i < 6; i++)
+					b[2+i] = (bits >> (8*i)) & 0xFF;
+				cb = b + 8;
+			}
+			int r = 40 + bx*13, g = 30 + by*13, bl = 128 + ((bx ^ by) & 7)*16;
+			uint16 c0 = rgb565(r & 255, g & 255, bl & 255);
+			uint16 c1 = rgb565(255 - (r & 255), 255 - (g & 255), 255 - (bl & 255));
+			if(c0 <= c1){	// 4 colour mode in DXT1 needs c0 > c1
+				uint16 t = c0; c0 = c1; c1 = t;
+				if(c0 == c1) c0 ^= 0x0020;
+			}
+			cb[0] = c0 & 0xFF; cb[1] = c0 >> 8;
+			cb[2] = c1 & 0xFF; cb[3] = c1 >> 8;
+			uint32 idx = 0;
+			for(int k = 0; k < 16; k++){
+				int tx = k & 3, ty = k >> 2;
+				idx |= (uint32)(((tx >> 1) ^ (ty >> 1)) & 1) << (2*k);
+			}
+			cb[4] = idx & 0xFF; cb[5] = (idx >> 8) & 0xFF; cb[6] = (idx >> 16) & 0xFF; cb[7] = idx >> 24;
+		}
+}
+
+// the same blocks in another byte order: 1 every 16 bit word swapped,
+// 2 colours swapped as 16 bit words and the indices as one 32 bit word
+static void
+probeSwapDXT(int32 dxt, int32 nblocks, uint8 *d, int how)
+{
+	int bs = dxt == 1 ? 8 : 16;
+	for(int i = 0; i < nblocks; i++, d += bs){
+		if(how == 1){
+			for(int k = 0; k < bs; k += 2){ uint8 t = d[k]; d[k] = d[k+1]; d[k+1] = t; }
+		}else if(how == 2){
+			uint8 *c = dxt == 1 ? d : d + 8;
+			uint8 t;
+			t = c[0]; c[0] = c[1]; c[1] = t;
+			t = c[2]; c[2] = c[3]; c[3] = t;
+			t = c[4]; c[4] = c[7]; c[7] = t;
+			t = c[5]; c[5] = c[6]; c[6] = t;
+		}
+	}
+}
+
+// a texture raster whose descriptor the probe writes (rasterBindInfo)
+static Raster*
+probeRaster(int32 w, int32 h, uint8 fmt, uint8 loc, uint32 offset, uint32 pitch, int32 levels)
+{
+	Raster *r = Raster::create(w, h, 32, Raster::C8888 | Raster::TEXTURE, PLATFORM_PS3);
+	if(r == nil)
+		return nil;
+	Ps3Raster *n = GETPS3RASTEREXT(r);
+	n->probeFmt = fmt;
+	n->probeLoc = loc;
+	n->probeOffset = offset;
+	n->probePitch = pitch;
+	n->probeLevels = levels;
+	return r;
+}
+
+// the RSX done with everything, the texture cache clean after a CPU write
+static void
+probeFlushWrites(void *p, uint32 size)
+{
+	vramFlush(p, size);
+	textureCacheTouched();
+}
+
+void
+hwProbe(void)
+{
+	if(rsxCtx == nil)
+		return;
+	rsxLog("[probe] ---- hardware probe (USRDIR/probe.txt) ----");
+	Camera *prev = (Camera*)engine->currentCamera;
+	bool saveMips = forceMipmaps;
+	forceMipmaps = false;
+	textureJobsSync();
+
+	// main memory the RSX can read: 2 MB, 1 MB aligned
+	uint8 *xdr = (uint8*)memalign(1<<20, 2<<20);
+	uint32 xdrOffset = 0;
+	bool xdrOk = false;
+	if(xdr){
+		s32 r = gcmMapMainMemory(xdr, 2<<20, &xdrOffset);
+		xdrOk = r == 0;
+		rsxLog("[probe] main memory for the RSX: gcmMapMainMemory %s (0x%08x, offset 0x%08x)",
+		       xdrOk ? "ok" : "FAILED", (unsigned)r, (unsigned)xdrOffset);
+	}
+
+	Camera *cam = probeCamera(64, 64);
+	if(cam == nil){
+		rsxLog("[probe] no camera");
+		forceMipmaps = saveMips;
+		return;
+	}
+
+	// 1. native DXT ------------------------------------------------------------------
+	static const char *howName[3] = { "PC bytes", "16 bit words swapped", "colours 16 bit, indices 32 bit swapped" };
+	uint8 *blocks = (uint8*)malloc(64*64);
+	uint8 *ref = (uint8*)malloc(64*64*4);
+	int best1 = -1, bestHow = 0, bestLin = 0;
+	for(int dxt = 1; dxt <= 5; dxt += 4){
+		int nb = 16*16, bs = dxt == 1 ? 8 : 16;
+		probeMakeDXT(dxt, 64, 64, blocks);
+		probeDecodeDXT(dxt, ref, 64, 64, blocks);
+		for(int how = 0; how < (dxt == 1 ? 3 : 2); how++)
+			for(int lin = 0; lin < 2; lin++){
+				uint8 fmt = (dxt == 1 ? GCM_TEXTURE_FORMAT_DXT1 : GCM_TEXTURE_FORMAT_DXT45) |
+				            (lin ? GCM_TEXTURE_FORMAT_LIN : GCM_TEXTURE_FORMAT_SWZ) | GCM_TEXTURE_FORMAT_NRM;
+				Raster *r = probeRaster(64, 64, fmt, GCM_LOCATION_RSX, 0, lin ? 16*bs : 0, 1);
+				if(r == nil)
+					continue;
+				Ps3Raster *n = GETPS3RASTEREXT(r);
+				if(n->vram == nil){ r->destroy(); continue; }
+				n->probeOffset = n->vramOffset;
+				memcpy(n->vram, blocks, nb*bs);
+				probeSwapDXT(dxt, nb, n->vram, how);
+				probeFlushWrites(n->vram, nb*bs);
+				probeBegin(cam, Texture::NEAREST);
+				probeQuad(cam, r, 64, 64, 2.0f);
+				cam->endUpdate();
+				int m = probeMatch(cam, ref, dxt == 5, 12);
+				rsxLog("[probe] DXT%d %s, %s: %d%% of the picture right", dxt, lin ? "LIN flag" : "SWZ flag", howName[how], m);
+				if(dxt == 1 && m > best1){ best1 = m; bestHow = how; bestLin = lin; }
+				r->destroy();
+			}
+	}
+	rsxLog("[probe] DXT1 best: %s, %s (%d%%)", bestLin ? "LIN flag" : "SWZ flag", howName[bestHow], best1);
+
+	// mip levels: level 1 all red, the quad minified 2x with MIPNEAREST
+	{
+		uint8 *l1 = (uint8*)malloc(8*8*8);
+		for(int i = 0; i < 64; i++){
+			uint8 *b = l1 + i*8;
+			uint16 red = rgb565(255, 0, 0);
+			b[0] = red & 0xFF; b[1] = red >> 8; b[2] = 0; b[3] = 0;	// c0 red > c1 black
+			b[4] = b[5] = b[6] = b[7] = 0;	// all index 0
+		}
+		probeMakeDXT(1, 64, 64, blocks);
+		uint8 fmt = GCM_TEXTURE_FORMAT_DXT1 | (bestLin ? GCM_TEXTURE_FORMAT_LIN : GCM_TEXTURE_FORMAT_SWZ) | GCM_TEXTURE_FORMAT_NRM;
+		Raster *r = probeRaster(64, 64, fmt, GCM_LOCATION_RSX, 0, bestLin ? 16*8 : 0, 2);
+		Ps3Raster *n = r ? GETPS3RASTEREXT(r) : nil;
+		if(n && n->vram){
+			n->probeOffset = n->vramOffset;
+			memcpy(n->vram, blocks, 16*16*8);
+			memcpy(n->vram + 16*16*8, l1, 64*8);
+			probeSwapDXT(1, 16*16 + 64, n->vram, bestHow);
+			probeFlushWrites(n->vram, 16*16*8 + 64*8);
+			probeBegin(cam, Texture::MIPNEAREST);
+			probeQuad(cam, r, 64, 64, 2.0f);
+			cam->endUpdate();
+			uint8 *redRef = (uint8*)malloc(64*64*4);
+			for(int i = 0; i < 64*64; i++){ redRef[i*4] = 255; redRef[i*4+1] = 0; redRef[i*4+2] = 0; redRef[i*4+3] = 255; }
+			int m = probeMatch(cam, redRef, false, 12);
+			rsxLog("[probe] DXT1 mip level 1 (minified 2x, MIPNEAREST): %d%% red (100: the RSX takes DXT mip levels back to back)", m);
+			free(redRef);
+		}
+		if(r) r->destroy();
+		free(l1);
+	}
+
+	// 2. textures in main memory -----------------------------------------------------
+	if(xdrOk){
+		// A8R8G8B8: a normal texture's VRAM bytes copied into main memory
+		Raster *src = Raster::create(64, 64, 32, Raster::C8888 | Raster::TEXTURE, PLATFORM_PS3);
+		uint8 *chkRef = (uint8*)malloc(64*64*4);
+		if(src && chkRef){
+			uint8 *px = src->lock(0, Raster::LOCKWRITE | Raster::LOCKNOFETCH);
+			for(int y = 0; y < 64; y++)
+				for(int x = 0; x < 64; x++){
+					uint8 *p = chkRef + (y*64 + x)*4;
+					p[0] = x*4; p[1] = y*4; p[2] = ((x >> 3) ^ (y >> 3)) & 1 ? 255 : 0; p[3] = 255;
+				}
+			if(px){
+				memcpy(px, chkRef, 64*64*4);
+				src->unlock(0);
+			}
+			textureJobsSync();
+			Ps3Raster *sn = GETPS3RASTEREXT(src);
+			if(sn->vram){
+				for(int i = 0; i < 64*64*4; i += 4){	// VRAM is write-combined: read it as words
+					uint32 v = *(volatile uint32*)(sn->vram + i);
+					memcpy(xdr + i, &v, 4);
+				}
+				__asm__ volatile("sync" ::: "memory");
+				textureCacheTouched();
+				Raster *r = probeRaster(64, 64, GCM_TEXTURE_FORMAT_A8R8G8B8 | GCM_TEXTURE_FORMAT_SWZ | GCM_TEXTURE_FORMAT_NRM,
+				                        GCM_LOCATION_CELL, xdrOffset, 0, 1);
+				if(r){
+					probeBegin(cam, Texture::NEAREST);
+					probeQuad(cam, r, 64, 64, 2.0f);
+					cam->endUpdate();
+					rsxLog("[probe] A8R8G8B8 texture in main memory: %d%% of the picture right", probeMatch(cam, chkRef, false, 4));
+					r->destroy();
+				}
+				probeBegin(cam, Texture::NEAREST);
+				probeQuad(cam, src, 64, 64, 2.0f);
+				cam->endUpdate();
+				rsxLog("[probe] (the same texture in VRAM, as the game has it: %d%%)", probeMatch(cam, chkRef, false, 4));
+			}
+		}
+		if(src) src->destroy();
+		free(chkRef);
+		// DXT1 in main memory, the best layout
+		probeMakeDXT(1, 64, 64, blocks);
+		probeDecodeDXT(1, ref, 64, 64, blocks);
+		memcpy(xdr, blocks, 16*16*8);
+		probeSwapDXT(1, 16*16, xdr, bestHow);
+		__asm__ volatile("sync" ::: "memory");
+		textureCacheTouched();
+		Raster *r = probeRaster(64, 64, GCM_TEXTURE_FORMAT_DXT1 | (bestLin ? GCM_TEXTURE_FORMAT_LIN : GCM_TEXTURE_FORMAT_SWZ) | GCM_TEXTURE_FORMAT_NRM,
+		                        GCM_LOCATION_CELL, xdrOffset, bestLin ? 16*8 : 0, 1);
+		if(r){
+			probeBegin(cam, Texture::NEAREST);
+			probeQuad(cam, r, 64, 64, 2.0f);
+			cam->endUpdate();
+			rsxLog("[probe] DXT1 texture in main memory: %d%% of the picture right", probeMatch(cam, ref, false, 12));
+			r->destroy();
+		}
+	}
+	free(blocks);
+	free(ref);
+	probeCameraDestroy(cam);
+
+	// speed: 512x512 target, a 512x512 texture drawn 1:1 with bilinear, 60 times
+	Camera *big = probeCamera(512, 512);
+	if(big){
+		uint8 *noise = (uint8*)malloc(512*512*4);
+		uint32 seed = 12345;
+		for(int i = 0; i < 512*512*4; i++){ seed = seed*1103515245 + 12345; noise[i] = seed >> 24; }
+		struct { const char *name; Raster *r; } cfg[4];
+		int ncfg = 0;
+		Raster *vr = Raster::create(512, 512, 32, Raster::C8888 | Raster::TEXTURE, PLATFORM_PS3);
+		if(vr){
+			uint8 *px = vr->lock(0, Raster::LOCKWRITE | Raster::LOCKNOFETCH);
+			if(px){ memcpy(px, noise, 512*512*4); vr->unlock(0); }
+			textureJobsSync();
+			cfg[ncfg].name = "A8R8G8B8 in VRAM"; cfg[ncfg].r = vr; ncfg++;
+		}
+		Raster *dv = probeRaster(512, 512, GCM_TEXTURE_FORMAT_DXT1 | (bestLin ? GCM_TEXTURE_FORMAT_LIN : GCM_TEXTURE_FORMAT_SWZ) | GCM_TEXTURE_FORMAT_NRM,
+		                         GCM_LOCATION_RSX, 0, bestLin ? 128*8 : 0, 1);
+		if(dv && GETPS3RASTEREXT(dv)->vram){
+			Ps3Raster *n = GETPS3RASTEREXT(dv);
+			n->probeOffset = n->vramOffset;
+			memcpy(n->vram, noise, 128*128*8);
+			probeFlushWrites(n->vram, 128*128*8);
+			cfg[ncfg].name = "DXT1 in VRAM"; cfg[ncfg].r = dv; ncfg++;
+		}
+		Raster *xr = nil, *xd = nil;
+		if(xdrOk && vr){
+			Ps3Raster *vn = GETPS3RASTEREXT(vr);
+			if(vn->vram){
+				for(int i = 0; i < 512*512*4 && i < (2<<20) - 128*128*8; i += 4){
+					uint32 v = *(volatile uint32*)(vn->vram + i);
+					memcpy(xdr + i, &v, 4);
+				}
+				memcpy(xdr + (1<<20), noise, 128*128*8);
+				__asm__ volatile("sync" ::: "memory");
+				textureCacheTouched();
+				xr = probeRaster(512, 512, GCM_TEXTURE_FORMAT_A8R8G8B8 | GCM_TEXTURE_FORMAT_SWZ | GCM_TEXTURE_FORMAT_NRM,
+				                 GCM_LOCATION_CELL, xdrOffset, 0, 1);
+				if(xr){ cfg[ncfg].name = "A8R8G8B8 in main memory"; cfg[ncfg].r = xr; ncfg++; }
+				xd = probeRaster(512, 512, GCM_TEXTURE_FORMAT_DXT1 | (bestLin ? GCM_TEXTURE_FORMAT_LIN : GCM_TEXTURE_FORMAT_SWZ) | GCM_TEXTURE_FORMAT_NRM,
+				                 GCM_LOCATION_CELL, xdrOffset + (1<<20), bestLin ? 128*8 : 0, 1);
+				if(xd){ cfg[ncfg].name = "DXT1 in main memory"; cfg[ncfg].r = xd; ncfg++; }
+			}
+		}
+		for(int c = 0; c < ncfg; c++){
+			probeBegin(big, Texture::LINEAR);
+			probeQuad(big, cfg[c].r, 512, 512, 1.0f);	// warm up
+			big->endUpdate();
+			rsxFinishAll();
+			uint64 t0 = sysGetSystemTime();
+			probeBegin(big, Texture::LINEAR);
+			for(int i = 0; i < 60; i++)
+				probeQuad(big, cfg[c].r, 512, 512, 1.0f);
+			big->endUpdate();
+			rsxFinishAll();
+			uint64 us = sysGetSystemTime() - t0;
+			rsxLog("[probe] speed, %s: %.3f ms per 512x512 quad (60 in %.1f ms)", cfg[c].name, us/60000.0, us/1000.0);
+		}
+		if(vr) vr->destroy();
+		if(dv) dv->destroy();
+		if(xr) xr->destroy();
+		if(xd) xd->destroy();
+		free(noise);
+		probeCameraDestroy(big);
+	}
+
+	// 3. AltiVec ---------------------------------------------------------------------
+	{
+		char line[512];
+		if(ps3VmxProbe(line, sizeof(line)) >= 0)
+			rsxLog("[probe] AltiVec: %s", line);
+		else
+			rsxLog("[probe] AltiVec: %s", line);
+	}
+
+	if(xdrOk)
+		gcmUnmapEaIoAddress(xdr);
+	free(xdr);
+	forceMipmaps = saveMips;
+	engine->currentCamera = prev;
+	forgetHardwareState();
+	rsxLog("[probe] ---- done ----");
 }
 
 #endif	// RW_PS3_RSX

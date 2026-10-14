@@ -37,11 +37,17 @@
 
 #define PLUGIN_ID ID_DRIVER
 
+// ps3vmx.cpp (built with -maltivec): a 2x2 mip level with AltiVec; 0 when
+// the sizes or the buffers don't suit it (the scalar code does it then)
+extern "C" int vmxDownsample(unsigned char *dst, int dw, int dh, const unsigned char *src, int sw, int sh, int coverage);
+
 namespace rw {
 namespace ps3 {
 
 int32 nativeRasterOffset;
 bool dxt1As16 = true;
+bool dxtNative = true;
+bool vmxMips = true;
 bool forceMipmaps = false;
 int32 texFilterMode = 0;
 int32 texAniso = 1;
@@ -123,6 +129,14 @@ levelDim(int32 base, int32 level)
 {
 	int32 d = base >> level;
 	return d ? d : 1;
+}
+
+// bytes of a DXT level (a block of 4x4 even when the level is smaller)
+static inline uint32
+dxtLevelBytes(int32 w, int32 h, int32 bs)
+{
+	int32 bw = (w + 3)/4, bh = (h + 3)/4;
+	return (bw ? bw : 1) * (bh ? bh : 1) * bs;
 }
 
 // Size of one level as the game locks it, from the level 0 dimensions.
@@ -427,7 +441,19 @@ allocateTexels(Raster *raster, Ps3Raster *natras)
 	int32 tb = natras->vramFmt != PS3_VRAM_ARGB8 ? 2 : 4;	// bytes per texel in VRAM
 
 	natras->swizzled = isPow2(w) && isPow2(h);
-	if(!natras->swizzled){
+	if(natras->vramFmt == PS3_VRAM_DXT){
+		// the blocks, level after level (allocateDXT only picks this for
+		// power of two sizes). The SWZ format bit: the levels repeat
+		int32 bs = natras->texFormat == PS3_TEX_DXT1 ? 8 : 16;
+		natras->swizzled = true;
+		if(natras->numLevels > 13)
+			natras->numLevels = 13;
+		natras->pitch = 0;
+		for(int32 i = 0; i < natras->numLevels; i++){
+			natras->levelOffset[i] = total;
+			total += dxtLevelBytes(levelDim(w, i), levelDim(h, i), bs);
+		}
+	}else if(!natras->swizzled){
 		// linear: one level, rows padded to 64 bytes
 		natras->numLevels = 1;
 		natras->autogenMipmap = 0;
@@ -906,6 +932,66 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx
 	levelDone(cx, natras, level);
 }
 
+static void encodeDXT(int32 dxt, const uint8 *rgba, int32 w, int32 h, uint8 *out);
+
+static inline int32
+rasterDXT(Ps3Raster *natras)
+{
+	return natras->texFormat == PS3_TEX_DXT1 ? 1 :
+	       natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
+}
+
+// A level of a native DXT texture (PS3_VRAM_DXT): its blocks into VRAM as
+// they are
+static void
+copyDXTLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *blocks, ConvCtx *cx)
+{
+	if(level >= natras->numLevels || natras->vram == nil)
+		return;
+	int32 w = levelDim(raster->originalWidth, level);
+	int32 h = levelDim(raster->originalHeight, level);
+	uint32 bytes = dxtLevelBytes(w, h, rasterDXT(natras) == 1 ? 8 : 16);
+	uint64 t0 = texProfNow();
+	memcpy(natras->vram + natras->levelOffset[level], blocks, bytes);
+	vramFlush(natras->vram + natras->levelOffset[level], bytes);
+	texProfile.us[TEXPROF_VRAM] += texProfNow() - t0;
+	texProfile.levels++;
+	texProfile.dxtLevels++;
+	texProfile.texels += w*h;
+	drawStats.texUploadBytes += bytes;
+	levelDone(cx, natras, level);
+}
+
+// A mip level made on the CPU (RGBA8 bytes) for a native DXT texture:
+// compressed, then copied
+static void
+encodeDXTLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *rgba, ConvCtx *cx)
+{
+	if(level >= natras->numLevels || natras->vram == nil)
+		return;
+	int32 w = levelDim(raster->originalWidth, level);
+	int32 h = levelDim(raster->originalHeight, level);
+	int32 dxt = rasterDXT(natras);
+	uint8 *out = getScratch(cx, dxtLevelBytes(w, h, dxt == 1 ? 8 : 16));
+	if(out == nil)
+		return;
+	uint64 t0 = texProfNow();
+	encodeDXT(dxt, rgba, w, h, out);
+	texProfile.us[TEXPROF_ENCODE] += texProfNow() - t0;
+	texProfile.encLevels++;
+	copyDXTLevel(raster, natras, level, out, cx);
+}
+
+// a made mip level into VRAM, in the raster's format
+static inline void
+putMipLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx *cx)
+{
+	if(natras->vramFmt == PS3_VRAM_DXT)
+		encodeDXTLevel(raster, natras, level, rgba, cx);
+	else
+		uploadLevel(raster, natras, level, rgba, cx);
+}
+
 // Levels from+1.. made from level "from" (RGBA8 bytes) by 2x2 box
 // filtering, each uploaded as it is made (two buffers in turn)
 static void
@@ -925,12 +1011,14 @@ uploadMipChain(Raster *raster, Ps3Raster *natras, uint8 *rgba, int32 from, ConvC
 		int32 nh = levelDim(raster->originalHeight, i);
 		uint8 *next = prev == a ? b : a;
 		uint64 tm = texProfNow();
-		if(natras->forcedMips)
+		if(vmxMips && vmxDownsample(next, nw, nh, prev, pw, ph, natras->forcedMips))
+			texProfile.vmxLevels++;
+		else if(natras->forcedMips)
 			downsampleCoverage(next, nw, nh, prev, pw, ph);
 		else
 			downsampleRGBA8(next, nw, nh, prev, pw, ph);
 		texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
-		uploadLevel(raster, natras, i, next, cx);
+		putMipLevel(raster, natras, i, next, cx);
 		prev = next;
 		pw = nw;
 		ph = nh;
@@ -985,6 +1073,11 @@ readbackLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba)
 	int32 w = levelDim(raster->originalWidth, level);
 	int32 h = levelDim(raster->originalHeight, level);
 	uint8 *d = rgba;
+	if(natras->vramFmt == PS3_VRAM_DXT){
+		// blocks: not decoded back (the game never reads a DXT texture)
+		memset(rgba, 0, w*h*4);
+		return;
+	}
 	if(natras->vramFmt != PS3_VRAM_ARGB8){
 		bool a1 = natras->vramFmt == PS3_VRAM_ARGB1555;
 		uint32 *tx = natras->swizzled ? (uint32*)malloc((w+h)*4) : nil;
@@ -1111,6 +1204,210 @@ dxtHalf(int32 dxt, const uint8 *src, int32 w, int32 h, bool coverage, uint8 *dst
 		}
 }
 
+// ---- native DXT (patch 41) -------------------------------------------------------
+// The RSX samples DXT1/3/5 itself (patch 40's probe: the PC's block bytes,
+// back to back level after level): a power of two DXT texture is kept as
+// its blocks, 4x less VRAM (DXT1 vs 16 bit, DXT3/5 vs 32 bit) and
+// no conversion at all, only a copy. The MIPMAPS option's levels are made
+// from level 0 (level 1 straight from its blocks, dxtHalf), filtered as
+// before, and compressed again here.
+
+static inline uint32
+pack565(uint32 r, uint32 g, uint32 b)
+{
+	return ((r*31 + 127)/255) << 11 | ((g*63 + 127)/255) << 5 | ((b*31 + 127)/255);
+}
+
+// 16 texels (PACK_RGBA words, row by row) into a colour block (8 bytes, the
+// PC's byte order). All in integers: the PPU moves a value between its
+// integer and float registers through memory (a load-hit-store stall each
+// time), and patch 41's float version spent ~25000 cycles a block. The
+// endpoints: the corners of the colours' box on the diagonal that follows
+// them (the signs of the covariance with the channel that varies most),
+// pulled in by 1/16 of the box (van Waveren's real-time DXT). The indices:
+// each texel's position along the line between the two endpoints as the
+// decoder makes them. dxt1: texels with alpha < 128 get the transparent
+// index of the 3 colour mode; DXT3/5 always the 4 colour mode.
+static void
+encodeColorBlock(const uint32 *t, bool dxt1, uint8 *out)
+{
+	int32 cr[16], cg[16], cb[16], n = 0;
+	uint32 opaque = 0;	// bit k: texel k has a colour (not transparent)
+	for(int32 k = 0; k < 16; k++){
+		uint32 v = t[k];
+		if(dxt1 && RGBA_A(v) < 128)
+			continue;
+		opaque |= 1u << k;
+		cr[n] = RGBA_R(v); cg[n] = RGBA_G(v); cb[n] = RGBA_B(v);
+		n++;
+	}
+	if(n == 0){
+		// all transparent: 3 colour mode, every texel index 3
+		out[0] = out[1] = out[2] = out[3] = 0;
+		out[4] = out[5] = out[6] = out[7] = 0xFF;
+		return;
+	}
+	bool three = n < 16;
+	int32 rmin = 255, gmin = 255, bmin = 255, rmax = 0, gmax = 0, bmax = 0;
+	int32 sr = 0, sg = 0, sb = 0;
+	for(int32 i = 0; i < n; i++){
+		int32 r = cr[i], g = cg[i], b = cb[i];
+		sr += r; sg += g; sb += b;
+		rmin = r < rmin ? r : rmin; rmax = r > rmax ? r : rmax;
+		gmin = g < gmin ? g : gmin; gmax = g > gmax ? g : gmax;
+		bmin = b < bmin ? b : bmin; bmax = b > bmax ? b : bmax;
+	}
+	// covariances, centred values scaled by n (no division)
+	int32 vrr = 0, vgg = 0, vbb = 0, vrg = 0, vrb = 0, vgb = 0;
+	for(int32 i = 0; i < n; i++){
+		int32 r = cr[i]*n - sr, g = cg[i]*n - sg, b = cb[i]*n - sb;
+		r >>= 4; g >>= 4; b >>= 4;	// |x| < 4096: the sums fit 32 bits
+		vrr += r*r; vgg += g*g; vbb += b*b;
+		vrg += r*g; vrb += r*b; vgb += g*b;
+	}
+	// the diagonal: against the channel that varies most, a channel that
+	// goes the other way has its ends swapped
+	int32 hr = rmax, hg = gmax, hb = bmax, lr = rmin, lg = gmin, lb = bmin;
+	int32 sgnG, sgnB, sgnR;
+	if(vrr >= vgg && vrr >= vbb){ sgnR = 1; sgnG = vrg; sgnB = vrb; }
+	else if(vgg >= vbb){ sgnG = 1; sgnR = vrg; sgnB = vgb; }
+	else{ sgnB = 1; sgnR = vrb; sgnG = vgb; }
+	if(sgnR < 0){ hr = rmin; lr = rmax; }
+	if(sgnG < 0){ hg = gmin; lg = gmax; }
+	if(sgnB < 0){ hb = bmin; lb = bmax; }
+	// pulled in by 1/16 of the box
+	int32 ir = (rmax - rmin) >> 4, ig = (gmax - gmin) >> 4, ib = (bmax - bmin) >> 4;
+	hr += hr > lr ? -ir : ir; lr += hr > lr ? ir : -ir;
+	hg += hg > lg ? -ig : ig; lg += hg > lg ? ig : -ig;
+	hb += hb > lb ? -ib : ib; lb += hb > lb ? ib : -ib;
+	uint32 c0 = pack565(hr, hg, hb);
+	uint32 c1 = pack565(lr, lg, lb);
+	if(three){
+		if(c0 > c1){ uint32 x = c0; c0 = c1; c1 = x; }	// c0 <= c1: 3 colour mode
+	}else{
+		if(c0 < c1){ uint32 x = c0; c0 = c1; c1 = x; }	// c0 > c1: 4 colour mode
+	}
+	if(c0 == c1){
+		// one colour: index 0 everywhere (the same in both modes), 3 if transparent
+		uint32 idx = 0;
+		for(int32 k = 0; k < 16; k++)
+			if(!(opaque & (1u << k)))
+				idx |= 3u << (2*k);
+		out[0] = c0 & 0xFF; out[1] = c0 >> 8; out[2] = c1 & 0xFF; out[3] = c1 >> 8;
+		out[4] = idx & 0xFF; out[5] = (idx >> 8) & 0xFF; out[6] = (idx >> 16) & 0xFF; out[7] = idx >> 24;
+		return;
+	}
+	// the endpoints as the decoder expands them, and the line between them
+	int32 r0 = expand5[(c0>>11) & 0x1F], g0 = expand6[(c0>>5) & 0x3F], b0 = expand5[c0 & 0x1F];
+	int32 r1 = expand5[(c1>>11) & 0x1F], g1 = expand6[(c1>>5) & 0x3F], b1 = expand5[c1 & 0x1F];
+	int32 dr = r1 - r0, dg = g1 - g0, db = b1 - b0;
+	int32 len = dr*dr + dg*dg + db*db;	// > 0: c0 != c1
+	// the position f = dot/len (0 at c0, 1 at c1) picks the index:
+	// 4 colours: c0 | 2/3 c0 + 1/3 c1 | 1/3 c0 + 2/3 c1 | c1 = 0 2 3 1,
+	// borders at 1/6, 3/6, 5/6; 3 colours: c0 | half | c1 = 0 2 1, at 1/4, 3/4
+	uint32 idx = 0;
+	int32 m = 0;
+	for(int32 k = 0; k < 16; k++){
+		uint32 best;
+		if(!(opaque & (1u << k)))
+			best = 3;
+		else{
+			int32 dot = (cr[m] - r0)*dr + (cg[m] - g0)*dg + (cb[m] - b0)*db;
+			m++;
+			if(three){
+				int32 f = dot*4;	// in quarters of len
+				best = f < len ? 0 : f < 3*len ? 2 : 1;
+			}else{
+				int32 f = dot*6;	// in sixths of len
+				best = f < len ? 0 : f < 3*len ? 2 : f < 5*len ? 3 : 1;
+			}
+		}
+		idx |= best << (2*k);
+	}
+	out[0] = c0 & 0xFF; out[1] = c0 >> 8; out[2] = c1 & 0xFF; out[3] = c1 >> 8;
+	out[4] = idx & 0xFF; out[5] = (idx >> 8) & 0xFF; out[6] = (idx >> 16) & 0xFF; out[7] = idx >> 24;
+}
+
+// DXT5 alpha block: the 8 alpha mode between the largest and smallest
+// (index 0 the largest, 1 the smallest, 2-7 the steps between, as a
+// position along the range: one division a block)
+static void
+encodeAlpha5(const uint32 *t, uint8 *out)
+{
+	int32 amin = 255, amax = 0;
+	for(int32 k = 0; k < 16; k++){
+		int32 a = RGBA_A(t[k]);
+		amin = a < amin ? a : amin;
+		amax = a > amax ? a : amax;
+	}
+	out[0] = amax;
+	out[1] = amin;
+	uint64 bits = 0;
+	int32 range = amax - amin;
+	if(range > 0){
+		int32 inv = (7 << 16) / range;
+		for(int32 k = 0; k < 16; k++){
+			int32 s = ((amax - RGBA_A(t[k]))*inv + 0x8000) >> 16;	// 0 (amax) .. 7 (amin)
+			uint32 i = s == 0 ? 0 : s == 7 ? 1 : s + 1;
+			bits |= (uint64)i << (3*k);
+		}
+	}
+	for(int32 i = 0; i < 6; i++)
+		out[2+i] = (bits >> (8*i)) & 0xFF;
+}
+
+// DXT3 alpha block: 4 bits a texel
+static void
+encodeAlpha3(const uint32 *t, uint8 *out)
+{
+	uint32 lo = 0, hi = 0;
+	for(int32 k = 0; k < 8; k++){
+		lo |= ((RGBA_A(t[k])*15 + 127) / 255) << (4*k);
+		hi |= ((RGBA_A(t[k+8])*15 + 127) / 255) << (4*k);
+	}
+	for(int32 i = 0; i < 4; i++){
+		out[i] = lo >> (8*i);
+		out[4+i] = hi >> (8*i);
+	}
+}
+
+// an RGBA8 level (w x h, any size) into DXT blocks
+static void
+encodeDXT(int32 dxt, const uint8 *rgba, int32 w, int32 h, uint8 *out)
+{
+	dxtExpandInit();
+	const uint32 *px = (const uint32*)rgba;
+	int32 bw = (w + 3)/4, bh = (h + 3)/4;
+	uint32 t[16];
+	for(int32 by = 0; by < bh; by++)
+		for(int32 bx = 0; bx < bw; bx++){
+			if(w >= 4 && h >= 4){
+				const uint32 *s = px + by*4*w + bx*4;
+				for(int32 y = 0; y < 4; y++, s += w){
+					t[y*4] = s[0]; t[y*4+1] = s[1]; t[y*4+2] = s[2]; t[y*4+3] = s[3];
+				}
+			}else
+				// smaller than a block: the edge texels repeated
+				for(int32 k = 0; k < 16; k++){
+					int32 x = bx*4 + (k & 3), y = by*4 + (k >> 2);
+					if(x >= w) x = w - 1;
+					if(y >= h) y = h - 1;
+					t[k] = px[y*w + x];
+				}
+			if(dxt == 1){
+				encodeColorBlock(t, true, out);
+				out += 8;
+			}else{
+				if(dxt == 3)
+					encodeAlpha3(t, out);
+				else
+					encodeAlpha5(t, out);
+				encodeColorBlock(t, false, out + 8);
+				out += 16;
+			}
+		}
+}
+
 // One level the game wrote (RGBA8 bytes or DXT blocks) into VRAM, and the
 // mip levels made from level 0 when the raster wants them
 static void
@@ -1120,6 +1417,22 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 	int32 h = levelDim(raster->originalHeight, level);
 	bool mips = level == 0 && natras->autogenMipmap && natras->numLevels > 1;
 	uint8 *rgba = src;
+	if(natras->vramFmt == PS3_VRAM_DXT){
+		// native DXT: the game's blocks as they are; the MIPMAPS option's
+		// levels made from them and compressed again
+		copyDXTLevel(raster, natras, level, src, cx);
+		if(mips && natras->vram){
+			uint8 *half = convBuf(cx, &cx->decoded, (w/2)*(h/2)*4);
+			if(half == nil)
+				return;
+			uint64 tm = texProfNow();
+			dxtHalf(rasterDXT(natras), src, w, h, natras->forcedMips, half);
+			texProfile.us[TEXPROF_MIPS] += texProfNow() - tm;
+			encodeDXTLevel(raster, natras, 1, half, cx);
+			uploadMipChain(raster, natras, half, 1, cx);
+		}
+		return;
+	}
 	if(natras->isCompressed){
 		int32 dxt = natras->texFormat == PS3_TEX_DXT1 ? 1 :
 		            natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
@@ -1412,6 +1725,11 @@ texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src)
 {
 	if(!tjOn || raster->type != Raster::TEXTURE || natras->vram == nil || natras->validLevels != 0)
 		return false;
+	// native DXT with nothing to make: only a copy into VRAM, quicker than
+	// queuing it (in order: none of its levels queued before it)
+	if(natras->vramFmt == PS3_VRAM_DXT && natras->pendingJobs == 0 &&
+	   !(level == 0 && natras->autogenMipmap && natras->numLevels > 1))
+		return false;
 	// a loading screen queues a whole island: the buffers waiting would
 	// take too much memory, the game thread catches up first
 	if(tjBacklog > 2000000)
@@ -1435,7 +1753,8 @@ texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src)
 	j->natras = natras;
 	j->level = level;
 	j->src = src;
-	j->texels = w*h + (mip ? w*h/3 : 0);
+	// the work, in texels converted (a native DXT level is only copied)
+	j->texels = (natras->vramFmt == PS3_VRAM_DXT ? w*h/16 : w*h) + (mip ? w*h/3 : 0);
 	j->state = TJ_QUEUED;
 	j->validBits = 0;
 	j->next = nil;
@@ -1603,6 +1922,24 @@ void
 rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels)
 {
 	Ps3Raster *natras = GETPS3RASTEREXT(raster->parent);
+	if(natras->probeFmt){
+		// hwProbe's textures: as the probe describes them
+		memset(tex, 0, sizeof(*tex));
+		tex->format = natras->probeFmt;
+		tex->mipmap = natras->probeLevels;
+		tex->dimension = GCM_TEXTURE_DIMS_2D;
+		tex->cubemap = GCM_FALSE;
+		tex->remap = 0x00AAE4;
+		tex->width = raster->parent->originalWidth;
+		tex->height = raster->parent->originalHeight;
+		tex->depth = 1;
+		tex->location = natras->probeLoc;
+		tex->pitch = natras->probePitch;
+		tex->offset = natras->probeOffset;
+		*numLevels = natras->probeLevels;
+		*swizzled = true;	// REPEAT whatever the layout: that is what the probe tries
+		return;
+	}
 	if(natras->pendingJobs)
 		tjWaitRaster(natras);	// levels the texture thread hasn't finished
 	int32 n = 0;
@@ -1617,6 +1954,9 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 	memset(tex, 0, sizeof(*tex));
 	tex->format = (natras->vramFmt == PS3_VRAM_RGB565 ? GCM_TEXTURE_FORMAT_R5G6B5 :
 	               natras->vramFmt == PS3_VRAM_ARGB1555 ? GCM_TEXTURE_FORMAT_A1R5G5B5 :
+	               natras->vramFmt == PS3_VRAM_DXT ?
+	                 (natras->texFormat == PS3_TEX_DXT1 ? GCM_TEXTURE_FORMAT_DXT1 :
+	                  natras->texFormat == PS3_TEX_DXT3 ? GCM_TEXTURE_FORMAT_DXT23 : GCM_TEXTURE_FORMAT_DXT45) :
 	               GCM_TEXTURE_FORMAT_A8R8G8B8) |
 		(natras->swizzled ? GCM_TEXTURE_FORMAT_SWZ : GCM_TEXTURE_FORMAT_LIN);
 	tex->mipmap = n;
@@ -1665,7 +2005,10 @@ rasterCrc(Raster *raster)
 		return 0;
 	uint32 words = natras->swizzled ? raster->parent->originalWidth*raster->parent->originalHeight
 	                                : natras->pitch*raster->parent->originalHeight/4;
-	if(natras->vramFmt != PS3_VRAM_ARGB8 && natras->swizzled)
+	if(natras->vramFmt == PS3_VRAM_DXT)
+		words = dxtLevelBytes(raster->parent->originalWidth, raster->parent->originalHeight,
+		                      natras->texFormat == PS3_TEX_DXT1 ? 8 : 16)/4;
+	else if(natras->vramFmt != PS3_VRAM_ARGB8 && natras->swizzled)
 		words /= 2;
 	volatile uint32 *p = (volatile uint32*)natras->vram;
 	uint32 h = 2166136261u;
@@ -1705,6 +2048,12 @@ debugRaster(Raster *raster, const char *tag)
 	       natras->swizzled ? "swizzled" : "linear", natras->isCompressed ? " DXT" : "",
 	       natras->numLevels, natras->validLevels, natras->hasAlpha ? "alpha" : "opaque",
 	       n ? a0*100/n : 0, n ? a255*100/n : 0, n ? black*100/n : 0, n ? white*100/n : 0);
+}
+
+void
+probeDecodeDXT(int32 dxt, uint8 *dst, int32 w, int32 h, const uint8 *src)
+{
+	decodeDXT(dxt, dst, w, h, src);
 }
 
 static Raster *white;
@@ -2032,9 +2381,15 @@ allocateDXT(Raster *raster, int32 dxt, int32 numLevels, bool32 hasAlpha)
 	natras->autogenMipmap = 0;
 	forceMipChain(raster, natras);
 #ifdef RW_PS3_RSX
-	// DXT1: 16 bits in VRAM (level 0's upload picks 565 or 1555)
-	if(dxt == 1 && dxt1As16 && !hasStorage(natras))
-		natras->vramFmt = PS3_VRAM_ARGB1555;
+	// patch 41: power of two (and 4x4 or more) DXT stays DXT, the RSX
+	// samples it. Else DXT1 in 16 bits (level 0's upload picks 565 or 1555)
+	if(!hasStorage(natras)){
+		if(dxtNative && isPow2(raster->width) && isPow2(raster->height) &&
+		   raster->width >= 4 && raster->height >= 4)
+			natras->vramFmt = PS3_VRAM_DXT;
+		else if(dxt == 1 && dxt1As16)
+			natras->vramFmt = PS3_VRAM_ARGB1555;
+	}
 #endif
 
 	if(!hasStorage(natras))

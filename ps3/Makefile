@@ -82,7 +82,7 @@ LIBRW_SRCS := $(addprefix $(RW)/, \
   gl/gl3raster.cpp gl/gl3render.cpp gl/gl3shader.cpp gl/gl3skin.cpp gl/wdgl.cpp \
   ps2/pds.cpp ps2/ps2.cpp ps2/ps2device.cpp ps2/ps2matfx.cpp ps2/ps2raster.cpp ps2/ps2skin.cpp \
   ps3/ps3device.cpp ps3/ps3raster.cpp ps3/ps3mem.cpp ps3/ps3video.cpp ps3/ps3pipe.cpp \
-  ps3/ps3immed.cpp \
+  ps3/ps3immed.cpp ps3/ps3vmx.cpp \
   lodepng/lodepng.cpp)
 
 # every game directory, minus the PC platform layers and the audio backends
@@ -267,7 +267,10 @@ $(OBJDIR)/flags.mode: FORCE
 $(OBJDIR)/vendor/%.o: $(ROOT)/vendor/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(LIBRW_FLAGS) -c $< -o $@
+	@$(CXX) $(LIBRW_FLAGS) $(VMX_FLAGS) -c $< -o $@
+
+# AltiVec (VMX): only the files that use it (mip levels, the hardware probe's test)
+$(OBJDIR)/vendor/librw/src/ps3/ps3vmx.o: VMX_FLAGS := -maltivec
 
 $(OBJDIR)/src/%.o: $(SRC)/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)

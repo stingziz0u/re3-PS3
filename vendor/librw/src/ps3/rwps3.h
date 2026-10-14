@@ -120,6 +120,12 @@ struct Ps3Raster
 	uint8   vramFmt;	// PS3_VRAM_*: how the texels are kept in VRAM
 	bool    forcedMips;	// the MIPMAPS option added the mip levels
 	int8    pendingJobs;	// levels queued for the texture thread (stage 2)
+	// hardware probe (USRDIR/probe.txt): a texture described as is, its
+	// data written by the probe (format with the SWZ/LIN bit, location)
+	uint8   probeFmt;	// 0: not a probe texture
+	uint8   probeLoc;
+	uint8   probeLevels;
+	uint32  probeOffset, probePitch;
 };
 
 // VRAM formats of a texture (stage 2). DXT1 (most of VC's PC textures) is
@@ -129,6 +135,7 @@ enum {
 	PS3_VRAM_ARGB8 = 0,
 	PS3_VRAM_RGB565,	// opaque DXT1 (alpha read as 1)
 	PS3_VRAM_ARGB1555,	// DXT1 with transparent texels
+	PS3_VRAM_DXT,		// patch 41: the DXT1/3/5 blocks as they are (power of two sizes)
 };
 
 // Video settings of the RSX renderer (stage 2)
@@ -147,6 +154,8 @@ void gpuMark(int32 id);
 extern bool gpuTimersOn;	// default off (the timestamp reports hang the RSX)
 extern bool additiveKill;	// additive draws kill the fragments that add nothing (default on)
 extern bool dxt1As16;		// DXT1 textures in 16 bits in VRAM (default on; USRDIR/dxt32.txt turns it off)
+extern bool dxtNative;		// DXT textures kept as DXT in VRAM, sampled by the RSX (default on; USRDIR/nodxt.txt turns it off)
+extern bool vmxMips;		// mip levels made with AltiVec (default on; USRDIR/novmx.txt turns it off)
 extern bool texAsync;		// textures converted on a second PPU thread (default on; USRDIR/notexthread.txt turns it off)
 // texels the texture thread still has to convert (the game's streaming
 // stops loading more in a frame while this is high); 0 in stage 1
@@ -183,6 +192,10 @@ void debugRaster(Raster *raster, const char *tag);
 void debugWatchRaster(Raster *raster, const char *tag);
 // draws known patterns offscreen, reads them back, logs what the RSX did
 void selfTest(const char *tag, Raster *font);
+// USRDIR/probe.txt: native DXT textures, textures in main memory and the
+// PPU's AltiVec, tried on the hardware and logged ([probe] lines)
+void hwProbe(void);
+void probeDecodeDXT(int32 dxt, uint8 *dst, int32 w, int32 h, const uint8 *src);
 // VRAM almost full (what is waiting to be freed counts as free):
 // the game's streaming throws out unused models while this is true
 bool vramTight(void);
@@ -222,6 +235,7 @@ enum {
 	TEXPROF_READBACK,	// VRAM read back by the CPU (slow)
 	TEXPROF_INDEXED,	// palettized D3D8 textures, fast path, all of it
 	TEXPROF_DXT,		// DXT blocks decoded on the CPU
+	TEXPROF_ENCODE,		// mip levels compressed to DXT (native DXT with the MIPMAPS option)
 	TEXPROF_NUM
 };
 struct TexProfile {
@@ -231,6 +245,9 @@ struct TexProfile {
 	uint64 texels;		// texels uploaded
 	uint32 readbacks;
 	uint32 indexed;		// textures that took the palettized fast path
+	uint32 dxtLevels;	// levels kept as DXT (copied, no conversion)
+	uint32 encLevels;	// of them, compressed here (mip levels made on the CPU)
+	uint32 vmxLevels;	// mip levels made with AltiVec
 	// the game's streaming: whole conversions (CStreaming::ConvertBufferToObject
 	// and FinishLoadingLargeFile), what the frame actually waits for
 	uint64 txdUs, modelUs, otherUs, worstUs;

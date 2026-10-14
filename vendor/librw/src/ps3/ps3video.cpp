@@ -555,6 +555,9 @@ logStats(void)
 		       t.levels, (uint32)(t.texels/1000), t.indexed, t.us[TEXPROF_INDEXED]/1000.0,
 		       t.textures, t.us[TEXPROF_CONVERT]/1000.0, t.us[TEXPROF_FROMIMAGE]/1000.0, t.us[TEXPROF_SWIZZLE]/1000.0,
 		       t.us[TEXPROF_VRAM]/1000.0, t.us[TEXPROF_MIPS]/1000.0, t.us[TEXPROF_DXT]/1000.0, t.us[TEXPROF_READBACK]/1000.0, t.readbacks);
+	if(t.dxtLevels || t.vmxLevels)
+		rsxLog("[tex]   native DXT: %u levels (%u compressed here, %.1f ms); mip levels with AltiVec: %u",
+		       t.dxtLevels, t.encLevels, t.us[TEXPROF_ENCODE]/1000.0, t.vmxLevels);
 	if(t.asyncLevels || t.helpedLevels)
 		rsxLog("[tex]   texture thread: %u levels; the game thread finished %u for a draw, %.1f ms in all; backlog now %u Ktexels",
 		       t.asyncLevels, t.helpedLevels, t.syncWaitUs/1000.0, textureBacklog()/1000);
