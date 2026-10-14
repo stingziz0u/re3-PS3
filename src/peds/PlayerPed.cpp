@@ -1236,6 +1236,74 @@ CPlayerPed::PlayerControlZelda(CPad *padUsed)
 	}
 }
 
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+// patch 55 (reVC-PS3 49): the player stuck in the air, in the jump or fall pose, with
+// nothing to do but wait (Ren's video: jumping between stacked crates, his
+// legs inside one). CPed::ProcessControl's own way out looks for ground
+// between half a metre above his centre and his feet, and only nudges him
+// off buildings (FIX_BUGS took even that away from the player): inside a
+// crate it finds nothing, for good. After 1.5 s in the air without moving
+// he is put on top of what is under him (a line from 2.5 m above), or back
+// where he last stood.
+static void
+PS3_PlayerUnstick(CPlayerPed *p)
+{
+	static uint32 since;
+	static CVector anchor, lastStand;
+	static bool haveStand;
+	const CVector &pos = p->GetPosition();
+	bool inAir = !p->bIsStanding && !p->bInVehicle && !p->bIsInWater && !p->DyingOrDead() &&
+		(p->bIsInTheAir || p->m_nPedState == PED_JUMP || p->m_nPedState == PED_FALL ||
+		 RpAnimBlendClumpGetAssociation(p->GetClump(), ANIM_STD_JUMP_GLIDE) ||
+		 RpAnimBlendClumpGetAssociation(p->GetClump(), ANIM_STD_FALL_GLIDE));
+	if (!inAir) {
+		since = 0;
+		if (p->bIsStanding && !p->bInVehicle) {
+			lastStand = pos;
+			haveStand = true;
+		}
+		return;
+	}
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	if (since == 0 || (pos - anchor).MagnitudeSqr() > 0.15f * 0.15f) {
+		since = now;
+		anchor = pos;
+		return;
+	}
+	if (now - since < 1500)
+		return;
+	since = 0;
+	CColPoint col;
+	CEntity *ent = nil;
+	CVector target;
+	CVector from = pos + CVector(0.0f, 0.0f, 2.5f);
+	if (CWorld::ProcessVerticalLine(from, pos.z - 3.0f, col, ent, true, true, false, true, false, false, nil) &&
+	    col.point.z < pos.z + 2.0f)
+		target = col.point + CVector(0.0f, 0.0f, FEET_OFFSET);
+	else if (haveStand)
+		target = lastStand;
+	else
+		return;
+	PS3_Logf("[ped] player stuck in the air at (%.1f, %.1f, %.1f), state %d, on %s %d: put at (%.1f, %.1f, %.1f)",
+	         pos.x, pos.y, pos.z, p->m_nPedState, ent ? (ent->IsBuilding() ? "building" : ent->IsObject() ? "object" : "entity") : "nothing",
+	         ent ? ent->GetModelIndex() : -1, target.x, target.y, target.z);
+	CAnimBlendAssociation *glide = RpAnimBlendClumpGetAssociation(p->GetClump(), ANIM_STD_JUMP_GLIDE);
+	if (glide == nil)
+		glide = RpAnimBlendClumpGetAssociation(p->GetClump(), ANIM_STD_FALL_GLIDE);
+	if (glide) {
+		glide->blendDelta = -3.0f;
+		glide->flags |= ASSOC_DELETEFADEDOUT;
+	}
+	p->SetPosition(target);
+	p->GetMatrix().UpdateRW();
+	p->m_vecMoveSpeed = CVector(0.0f, 0.0f, 0.0f);
+	p->SetLanding();
+	p->bIsStanding = true;
+	p->bIsInTheAir = false;
+}
+#endif
+
 void
 CPlayerPed::ProcessControl(void)
 {
@@ -1256,6 +1324,9 @@ CPlayerPed::ProcessControl(void)
 			bTryingToReachDryLand = false;
 	}
 	CPed::ProcessControl();
+#ifdef __PS3__
+	PS3_PlayerUnstick(this);
+#endif
 	if (bWasPostponed)
 		return;
 
