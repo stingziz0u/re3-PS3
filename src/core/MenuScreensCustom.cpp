@@ -155,6 +155,10 @@ ScreenFitButtonPress(int8 action)
 
 const char *filterNames[] = { "FEM_NON", "FEM_SIM", "FEM_NRM", "FEM_MOB" };
 const char *off_on[] = { "FEM_OFF", "FEM_ON" };
+#ifdef __PS3__
+// Display: collectibles on the radar and the map (Radar.cpp)
+extern int8 gPS3MapPackages, gPS3MapRampages;
+#endif
 
 void RestoreDefGraphics(int8 action) {
 	if (action != FEOPTION_ACTION_SELECT)
@@ -217,6 +221,10 @@ void RestoreDefDisplay(int8 action) {
 	#endif
 	#if defined(__PS3__) && defined(RW_PS3_RSX)
 		gPS3ScreenFit = 90;
+	#endif
+	#ifdef __PS3__
+		gPS3MapPackages = 0;
+		gPS3MapRampages = 0;
 	#endif
 	#ifdef GRAPHICS_MENU_OPTIONS // otherwise Frontend will handle those
 		CMenuManager::m_PrefsBrightness = 256;
@@ -532,6 +540,10 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 		FREE_CAM_TOGGLE
 #endif
 		MENUACTION_SUBTITLES,	"FED_SUB", { nil, SAVESLOT_NONE, MENUPAGE_DISPLAY_SETTINGS },
+#ifdef __PS3__
+		MENUACTION_CFO_SELECT,	"FED_MHP", { new CCFOSelect((int8*)&gPS3MapPackages, "Display", "HiddenPackagesOnMap", off_on, 2, false) },
+		MENUACTION_CFO_SELECT,	"FED_MRP", { new CCFOSelect((int8*)&gPS3MapRampages, "Display", "RampagesOnMap", off_on, 2, false) },
+#endif
 		SCREEN_FIT_SELECTOR
 		MENUACTION_CFO_DYNAMIC,	"FET_DEF", { new CCFODynamic(nil, nil, nil, nil, RestoreDefDisplay) },
 		MENUACTION_CHANGEMENU,	"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE },

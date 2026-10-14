@@ -55,6 +55,10 @@ PlayStation button icons and the controller picture of the settings page).
   on-screen help.
 - **Map** in the pause menu, Vice City style: the game's radar tiles, every
   safehouse, Ammu-Nation, Pay 'n' Spray and bomb shop, waypoints with X.
+- **Collectibles on the map** (*Display > Hidden packages on map / Rampages
+  on map*, off by default): the hidden packages in lime green and the
+  rampages in blood red, on the radar (the nearest one at its edge when none
+  is in range) and the pause menu map. One you pick up (or pass) disappears.
 - **MP3 player radio**: put `.mp3` files in `USRDIR/mp3`.
 - **Skins**: put `.bmp` skins in `USRDIR/skins`, choose them in *Player setup*.
 - DXT textures (most of the PC game's) stay compressed in video memory and

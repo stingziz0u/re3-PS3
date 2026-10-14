@@ -18,6 +18,12 @@
 #include "World.h"
 #include "Streaming.h"
 #include "SpecialFX.h"
+#ifdef __PS3__
+#include "Pickups.h"
+#include "Darkel.h"
+#include "Game.h"
+#include "ModelIndices.h"
+#endif
 
 float CRadar::m_radarRange;
 sRadarTrace CRadar::ms_RadarTrace[NUMRADARBLIPS];
@@ -438,6 +444,74 @@ void CRadar::Draw3dMarkers()
 	}
 }
 
+#ifdef __PS3__
+// Collectibles on the radar and the pause menu map (Display: HIDDEN PACKAGES
+// ON MAP, RAMPAGES ON MAP), like the "collectibles on radar" mod of San
+// Andreas (re3-PS3 patch 54, as reVC-PS3 48). They are the game's own pickups, read every frame: one picked up
+// (or a rampage passed) is gone from the list, and so from the map. Drawn
+// here, not as radar blips: nothing of it goes into the save.
+int8 gPS3MapPackages, gPS3MapRampages;
+static const CRGBA ps3PackageColour(120, 255, 40, 255);	// lime green
+static const CRGBA ps3RampageColour(165, 10, 10, 255);	// blood red
+
+static void
+PS3_CollectibleBlip(const CVector &pos, const CRGBA &c)
+{
+	CVector2D in, out;
+	CRadar::TransformRealWorldPointToRadarSpace(in, pos);
+	CRadar::LimitRadarPoint(in);
+	CRadar::TransformRadarPointToScreenSpace(out, in);
+	// up / down triangles above or below the player, as the game's blips
+	const CVector &me = FindPlayerCentreOfWorld_NoSniperShift();
+	uint8 mode = BLIP_MODE_TRIANGULAR_UP;
+	if (pos.z - me.z <= 2.0f)
+		mode = pos.z - me.z < -4.0f ? BLIP_MODE_TRIANGULAR_DOWN : BLIP_MODE_SQUARE;
+	CRadar::ShowRadarTraceWithHeight(out.x, out.y, 2, c.r, c.g, c.b, 255, mode);
+}
+
+// On the map all of them; on the radar the ones in its range, or else the
+// nearest of each kind at the radar's edge
+static void
+PS3_DrawCollectibles(void)
+{
+	bool map = CMenuManager::bMenuMapActive;
+	for (int kind = 0; kind < 2; kind++) {
+		if (kind == 0 ? !gPS3MapPackages : !gPS3MapRampages)
+			continue;
+		// the game hides the rampages during missions and frenzies
+		if (kind == 1 && (CTheScripts::IsPlayerOnAMission() || CDarkel::FrenzyOnGoing() || !CGame::nastyGame))
+			continue;
+		const CRGBA &c = kind == 0 ? ps3PackageColour : ps3RampageColour;
+		int nearest = -1;
+		float nearestDist = 0.0f;
+		bool inRange = false;
+		for (int i = 0; i < NUMPICKUPS; i++) {
+			CPickup &p = CPickups::aPickUps[i];
+			if (p.m_eType == PICKUP_NONE)
+				continue;
+			if (kind == 0 ? p.m_eType != PICKUP_COLLECTABLE1 : p.m_eModelIndex != MI_PICKUP_KILLFRENZY)
+				continue;
+			if (map) {
+				PS3_CollectibleBlip(p.m_vecPos, c);
+				continue;
+			}
+			CVector2D in;
+			CRadar::TransformRealWorldPointToRadarSpace(in, p.m_vecPos);
+			float d = in.Magnitude();	// 1: the radar's edge
+			if (d <= 1.0f) {
+				PS3_CollectibleBlip(p.m_vecPos, c);
+				inRange = true;
+			} else if (nearest < 0 || d < nearestDist) {
+				nearest = i;
+				nearestDist = d;
+			}
+		}
+		if (!map && !inRange && nearest >= 0)
+			PS3_CollectibleBlip(CPickups::aPickUps[nearest].m_vecPos, c);
+	}
+}
+#endif
+
 void CRadar::DrawBlips()
 {
 	if (!TheCamera.m_WideScreenOn && CHud::m_Wants_To_Draw_Hud) {
@@ -476,6 +550,10 @@ void CRadar::DrawBlips()
 			DrawRadarSprite(RADAR_SPRITE_NORTH, out.x, out.y, 255);
 #ifdef MENU_MAP
 		}
+#endif
+
+#ifdef __PS3__
+		PS3_DrawCollectibles();	// under the game's own blips
 #endif
 
 		CEntity *blipEntity = nil;

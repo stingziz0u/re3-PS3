@@ -4,6 +4,8 @@
 static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEG_FPS", "SHOW FPS" },	// re3-PS3's own
 	{ "FED_PSF", "SCREEN SIZE" },	// re3-PS3's own
+	{ "FED_MHP", "HIDDEN PACKAGES ON MAP" },	// re3-PS3's own
+	{ "FED_MRP", "RAMPAGES ON MAP" },	// re3-PS3's own
 	{ "FEG_FRT", "FRAME RATE" },	// re3-PS3's own
 	{ "FEG_F30", "30 FPS" },	// re3-PS3's own
 	{ "FEG_F60", "60 FPS" },	// re3-PS3's own
