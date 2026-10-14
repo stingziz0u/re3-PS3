@@ -1141,8 +1141,10 @@ PS3_AutotestFrame(void)
 		startStep();
 	}
 
-	if (waitingForLoad || FrontEndMenuManager.m_bMenuActive)
+	if (waitingForLoad || FrontEndMenuManager.m_bMenuActive) {
+		lastFrameUs = 0;	// the time in the menu isn't a frame
 		return;
+	}
 
 	statsFrame();
 	keepPlayerSafe();

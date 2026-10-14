@@ -70,6 +70,22 @@ GetVUresult(CVuVector &point, CVuVector &normal, float &dist)
 eLevelName CCollision::ms_collisionInMemory;
 CLinkList<CColModel*> CCollision::ms_colModelCache;
 
+#ifdef __PS3__
+// patch 53 (reVC-PS3 46): what collision costs inside, for the [col] log
+// line (World.cpp): ProcessColModels (sphere/box/line vs triangles), and
+// the triangle planes computed when a col model isn't in the plane cache
+int32 PS3_colCacheUsed;			// links in ms_colModelCache
+int32 PS3_colCacheLimit = NUMCOLCACHELINKS;	// the list's size (for the log line)
+unsigned long long PS3_colModelsTicks, PS3_colPlaneTicks;
+uint32 PS3_colModelsCalls, PS3_colPlaneMisses, PS3_colPlaneTris;
+static inline unsigned long long PS3_ColTicks(void) { unsigned long long t; __asm__ volatile("mftb %0" : "=r"(t)); return t; }
+struct PS3ColTimer {
+	unsigned long long t0, *acc;
+	PS3ColTimer(unsigned long long *a) : t0(PS3_ColTicks()), acc(a) {}
+	~PS3ColTimer() { *acc += PS3_ColTicks() - t0; }
+};
+#endif
+
 void
 CCollision::Init(void)
 {
@@ -1805,6 +1821,10 @@ CCollision::ProcessColModels(const CMatrix &matrixA, CColModel &modelA,
 	const CMatrix &matrixB, CColModel &modelB,
 	CColPoint *spherepoints, CColPoint *linepoints, float *linedists)
 {
+#ifdef __PS3__
+	PS3ColTimer ps3t(&PS3_colModelsTicks);
+	PS3_colModelsCalls++;
+#endif
 #ifdef VU_COLLISION
 	CVuVector *aSpheresA = (CVuVector*)SPR(0x0000);
 	CVuVector *aSpheresB = (CVuVector*)SPR(0x0800);
@@ -2301,7 +2321,16 @@ CCollision::CalculateTrianglePlanes(CColModel *model)
 		lptr->Remove();
 		ms_colModelCache.head.Insert(lptr);
 	}else{
+#ifdef __PS3__
+		PS3ColTimer ps3t(&PS3_colPlaneTicks);
+		PS3_colPlaneMisses++;
+		PS3_colPlaneTris += model->numTriangles;
+#endif
 		lptr = ms_colModelCache.Insert(model);
+#ifdef __PS3__
+		if(lptr)
+			PS3_colCacheUsed++;
+#endif
 		if(lptr == nil){
 			// make room if we have to, remove last in list
 			lptr = ms_colModelCache.tail.prev;

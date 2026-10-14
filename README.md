@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.1 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.2 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, but it hasn't had long play-throughs yet. Expect bugs and
 > please report them with the log (see [Troubleshooting](#troubleshooting)).
@@ -27,6 +27,16 @@ your own PC copy.
 > trilinear, anisotropic) and antialiasing (FXAA), and fewer hitches when
 > new areas stream in (textures converted several times faster, spread
 > over frames, and the log written in the background).
+>
+> 1.2 alpha brings what [reVC-PS3](https://github.com/stingziz0u/reVC-PS3)
+> 1.3 found: DXT textures stay compressed in video memory, where the RSX
+> reads them as they are (4 times less VRAM, and nothing to convert when an
+> area streams in); textures are converted on the PPU's second thread and
+> mip levels use AltiVec; big smoke and explosion particles right in front
+> of the camera fade out (explosions no longer swamp the RSX). It fixes a
+> crash from deleted objects left in the physics list and other stale
+> pointers, and after a crash the game goes back to the XMB instead of
+> freezing the console.
 
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
@@ -67,7 +77,7 @@ PlayStation button icons and the controller picture of the settings page).
 
 ## Installation
 
-1. Install `re3-ps3-1.1-alpha.pkg` on a PS3 with homebrew support (CFW or
+1. Install `re3-ps3-1.2-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **re3**.
 2. The PKG creates `/dev_hdd0/game/RE3PS3000/USRDIR` with these empty
@@ -143,7 +153,7 @@ On Linux or WSL (Ubuntu):
    make -C ps3 verify
    ```
 
-   The result is `ps3/re3-ps3-1.1-alpha.pkg`.
+   The result is `ps3/re3-ps3-1.2-alpha.pkg`.
 
 Other targets: `make -C ps3 DEBUG=1` (debug build with asserts),
 `make -C ps3 STAGE=1` (headless test build: loads the game without video,

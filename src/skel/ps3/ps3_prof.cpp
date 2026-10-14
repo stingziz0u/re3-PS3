@@ -48,6 +48,9 @@ struct ProfTimer
 	u64 total;
 };
 
+void PS3_FxReport(unsigned int frames);	// Particle.cpp
+void PS3_ColReport(unsigned int frames);	// World.cpp
+
 static ProfTimer timers[MAX_TIMERS];
 static int numTimers;
 static u64 frameStart, frameTotal, lastLog;
@@ -115,6 +118,8 @@ PS3_ProfFrame(void)
 		timers[i].total = 0;
 	}
 	PS3_Log(line);
+	PS3_FxReport(frames);	// Particle.cpp: what the particles drew
+	PS3_ColReport(frames);	// World.cpp: ProcessCollision's passes and models
 	PS3_LogMemTag("[mem] ");	// heap, free user memory, textures, streaming
 #if PS3_STAGE != 1
 	{
