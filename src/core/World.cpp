@@ -1847,12 +1847,53 @@ CWorld::RemoveStaticObjects()
 
 #ifdef __PS3__
 #include "ps3_platform.h"	// PS3_Logf
+// any live entity of the pools
+static bool
+PS3_AnyEntityLive(const void *p)
+{
+	int idx;
+	bool isFree;
+	if(CPools::GetPedPool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetVehiclePool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetObjectPool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetBuildingPool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetTreadablePool()->PS3_Owns(p, &idx, &isFree) ||
+	   CPools::GetDummyPool()->PS3_Owns(p, &idx, &isFree))
+		return !isFree;
+	return false;
+}
+
+static bool
+PS3_PedLive(const void *p)
+{
+	int idx;
+	bool isFree;
+	return CPools::GetPedPool()->PS3_Owns(p, &idx, &isFree) && !isFree;
+}
+
+static void
+PS3_LogStalePtr(CPhysical *e, const char *name, const void *p)
+{
+	static int logged;
+	if(logged < 24){
+		logged++;
+		PS3_Logf("[world] stale %s %p in %s %p (model %d): cleared", name, p,
+		         e->IsPed() ? "ped" : e->IsVehicle() ? "vehicle" : "object", e, e->GetModelIndex());
+	}
+	PS3_CRUMB("world: stale entity pointer cleared, model", e->GetModelIndex());
+}
+
 // Nodes of the moving list whose entity was deleted without leaving it (or
 // whose pool slot holds another entity now): dropped before anything uses
-// them, and logged. One pool check per moving entity a frame.
+// them, and logged. And the entity pointers of the vehicles and objects
+// that move (collision records, ground, driver, passengers...): one to a
+// deleted entity is cleared (the peds check theirs, Ped.cpp). A few pool
+// checks per moving entity a frame.
 static void
 PS3_SweepMovingList(void)
 {
+#define PS3_FIX_PTR(m, live) \
+	if((m) && !live(m)){ PS3_LogStalePtr(e, #m, (m)); (m) = nil; }
 	CPtrNode *next;
 	for(CPtrNode *node = CWorld::GetMovingEntityList().first; node; node = next){
 		next = node->next;
@@ -1864,17 +1905,38 @@ PS3_SweepMovingList(void)
 		else if(CPools::GetVehiclePool()->PS3_Owns(e, &idx, &isFree)) pool = "vehicle";
 		else if(CPools::GetObjectPool()->PS3_Owns(e, &idx, &isFree)) pool = "object";
 		else isFree = true;
-		if(!isFree && e->m_movingListNode == node)
+		if(isFree || e->m_movingListNode != node){
+			static int logged;
+			if(logged < 16){
+				logged++;
+				PS3_Logf("[world] moving list: %p (%s slot %d, %s) isn't a live entity there: dropped",
+				         e, pool, idx, isFree ? "free" : "another entity's node");
+			}
+			PS3_CRUMB("world: stale moving list node dropped, slot", idx);
+			CWorld::GetMovingEntityList().DeleteNode(node);
 			continue;
-		static int logged;
-		if(logged < 16){
-			logged++;
-			PS3_Logf("[world] moving list: %p (%s slot %d, %s) isn't a live entity there: dropped",
-			         e, pool, idx, isFree ? "free" : "another entity's node");
 		}
-		PS3_CRUMB("world: stale moving list node dropped, slot", idx);
-		CWorld::GetMovingEntityList().DeleteNode(node);
+		if(e->IsPed())
+			continue;
+		int n = 0;
+		for(int i = 0; i < e->m_nCollisionRecords && i < PHYSICAL_MAX_COLLISIONRECORDS; i++){
+			if(PS3_AnyEntityLive(e->m_aCollisionRecords[i]))
+				e->m_aCollisionRecords[n++] = e->m_aCollisionRecords[i];
+			else
+				PS3_LogStalePtr(e, "m_aCollisionRecords[]", e->m_aCollisionRecords[i]);
+		}
+		e->m_nCollisionRecords = n;
+		PS3_FIX_PTR(e->m_pDamageEntity, PS3_AnyEntityLive);
+		if(e->IsVehicle()){
+			CVehicle *v = (CVehicle *)e;
+			PS3_FIX_PTR(v->pDriver, PS3_PedLive);
+			for(int i = 0; i < ARRAY_SIZE(v->pPassengers); i++)
+				PS3_FIX_PTR(v->pPassengers[i], PS3_PedLive);
+			PS3_FIX_PTR(v->m_pCurGroundEntity, PS3_AnyEntityLive);
+			PS3_FIX_PTR(v->m_pBlowUpEntity, PS3_AnyEntityLive);
+		}
 	}
+#undef PS3_FIX_PTR
 }
 #endif
 

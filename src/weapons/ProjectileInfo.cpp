@@ -1,4 +1,5 @@
 #include "common.h"
+#include "Pools.h"
 
 #include "Camera.h"
 #include "General.h"
@@ -19,6 +20,21 @@ uint32 projectileInUse;
 
 CProjectileInfo gaProjectileInfo[NUM_PROJECTILES];
 CProjectile *CProjectileInfo::ms_apProjectile[NUM_PROJECTILES];
+
+
+#ifdef __PS3__
+static bool
+PS3_ProjSourceLive(const void *p)
+{
+	int idx;
+	bool isFree;
+	if (CPools::GetPedPool()->PS3_Owns(p, &idx, &isFree) ||
+	    CPools::GetVehiclePool()->PS3_Owns(p, &idx, &isFree) ||
+	    CPools::GetObjectPool()->PS3_Owns(p, &idx, &isFree))
+		return !isFree;
+	return false;
+}
+#endif
 
 void
 CProjectileInfo::Initialise()
@@ -219,9 +235,18 @@ CProjectileInfo::Update()
 	for (int i = 0; i < ARRAY_SIZE(gaProjectileInfo); i++) {
 		if (!gaProjectileInfo[i].m_bInUse) continue;
 
+#ifdef __PS3__
+		// the thrower deleted (a ped, or the vehicle of a rocket: the check
+		// below only knew peds, and read the freed one to know it): forgotten
+		if (gaProjectileInfo[i].m_pSource && !PS3_ProjSourceLive(gaProjectileInfo[i].m_pSource))
+			gaProjectileInfo[i].m_pSource = nil;
+		CPed *ped = (CPed*)gaProjectileInfo[i].m_pSource;
+		(void)ped;
+#else
 		CPed *ped = (CPed*)gaProjectileInfo[i].m_pSource;
 		if (ped != nil && ped->IsPed() && !ped->IsPointerValid())
 			gaProjectileInfo[i].m_pSource = nil;
+#endif
 
 		if (ms_apProjectile[i] == nil) {
 #ifdef SQUEEZE_PERFORMANCE
