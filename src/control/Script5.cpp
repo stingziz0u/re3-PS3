@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef __PS3__
+#include "ps3_platform.h"	// PS3_Logf
+#endif
 
 #include "Script.h"
 #include "ScriptCommands.h"
@@ -2189,6 +2192,19 @@ void CTheScripts::ClearSpaceForMissionEntity(const CVector& pos, CEntity* pEntit
 			CVehicle* pVehicle = (CVehicle*)pFound;
 			if (pVehicle->bIsLocked || !pVehicle->CanBeDeleted())
 				break;
+#ifdef __PS3__
+			// patch 56 (reVC-PS3 51): not a car a mission script has taken
+			// (a vigilante's criminal car: GET_RANDOM_CAR_OF_TYPE_IN_AREA
+			// makes it a mission car, its driver stays a random ped):
+			// deleting it deleted the criminal the script then looked at
+			if (pVehicle->VehicleCreatedBy == MISSION_VEHICLE) {
+				PS3_Logf("[script] room for a mission entity: mission car %d (model %d) left where it is",
+				         CPools::GetVehiclePool()->GetIndex(pVehicle), pVehicle->GetModelIndex());
+				break;
+			}
+			PS3_Logf("[script] room for a mission entity: random car %d (model %d) deleted, with its driver and %d passengers",
+			         CPools::GetVehiclePool()->GetIndex(pVehicle), pVehicle->GetModelIndex(), pVehicle->m_nNumPassengers);
+#endif
 			if (pVehicle->pDriver) {
 				CPopulation::RemovePed(pVehicle->pDriver);
 				pVehicle->pDriver = nil;

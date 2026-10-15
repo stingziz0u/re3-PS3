@@ -1603,6 +1603,18 @@ struct ScriptTrace { CRunningScript *script; uint16 op; uint32 ip; };
 static ScriptTrace scriptTrace[32];
 static int scriptTraceHead;
 
+// patch 56 (reVC-PS3 51): a getter asked about an entity that isn't there
+// (deleted under the script): logged, (0, 0, 0), the script goes on
+// (here the PC code read through nil)
+static void
+PS3_ScriptGone(CRunningScript *s, const char *what, int32 handle)
+{
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	PS3_Logf("[script] %s: %s of handle %d, which isn't there (deleted?): (0, 0, 0), the script goes on", name, what, handle);
+}
+
 void
 ScriptBroken(const char *file, int line)
 {
@@ -3432,6 +3444,14 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 	{
 		CollectParameters(&m_nIp, 1);
 		CPed* ped = CPools::GetPedPool()->GetAt(ScriptParams[0]);
+#ifdef __PS3__
+		if (ped == nil) {
+			PS3_ScriptGone(this, "GET_CHAR_COORDINATES", ScriptParams[0]);
+			ScriptParams[0] = ScriptParams[1] = ScriptParams[2] = 0;
+			StoreParameters(&m_nIp, 3);
+			return 0;
+		}
+#endif
 		script_assert(ped);
 		CVehicle* vehicle;
 		CVector pos;
@@ -3662,6 +3682,14 @@ int8 CRunningScript::ProcessCommands100To199(int32 command)
 	{
 		CollectParameters(&m_nIp, 1);
 		CVehicle* car = CPools::GetVehiclePool()->GetAt(ScriptParams[0]);
+#ifdef __PS3__
+		if (car == nil) {
+			PS3_ScriptGone(this, "GET_CAR_COORDINATES", ScriptParams[0]);
+			ScriptParams[0] = ScriptParams[1] = ScriptParams[2] = 0;
+			StoreParameters(&m_nIp, 3);
+			return 0;
+		}
+#endif
 		script_assert(car);
 		*(CVector*)&ScriptParams[0] = car->GetPosition();
 		StoreParameters(&m_nIp, 3);
