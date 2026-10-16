@@ -49,5 +49,10 @@ public:
 	static void ResetOnPlayerDeath();
 	static void StartFrenzy(eWeaponType weaponType, int32 time, uint16 kill, int32 modelId0, wchar *text, int32 modelId2, int32 modelId3, int32 modelId4, bool standardSound, bool needHeadShot);
 	static void Update();
+#ifdef __PS3__
+	// a frenzy against vehicles: true; its vehicle models in models[] (0
+	// of them: any car)
+	static bool PS3_VehicleFrenzy(int32 *models, int32 *numModels);
+#endif
 
 };
