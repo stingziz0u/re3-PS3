@@ -5,6 +5,9 @@
 #include "Clock.h"
 #include "Darkel.h"
 #include "Hud.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 #include "Messages.h"
 #include "Frontend.h"
 #include "Font.h"
@@ -1204,6 +1207,10 @@ void CHud::Draw()
 			CFont::SetDropShadowPosition(0);
 #endif // #ifdef XBOX_SUBTITLES
 		}
+
+#if defined(__PS3__) && PS3_STAGE != 1
+		PS3_CarSpawnerDraw();
+#endif
 
 		/*
 			DrawBigMessage

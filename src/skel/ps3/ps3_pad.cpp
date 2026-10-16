@@ -212,6 +212,17 @@ PS3_PadPoll(void)
 	axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] = Trigger(data.BTN_R2, data.PRE_R2);
 }
 
+// Raw DS3 buttons of the last poll, bit n = GLFW_GAMEPAD_BUTTON_n
+unsigned
+PS3_PadButtons(void)
+{
+	unsigned m = 0;
+	for (int i = 0; i < (int)(sizeof(buttons) / sizeof(buttons[0])); i++)
+		if (buttons[i])
+			m |= 1u << i;
+	return m;
+}
+
 // ---- GLFW ---------------------------------------------------------------------
 
 void
