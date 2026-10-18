@@ -1643,6 +1643,145 @@ ScriptBroken(const char *file, int line)
 	PS3_Logf("[script]   bytes from %u:%s", from, buf);
 }
 
+// ---- what a mission script waits for (reVC-PS3 patch 50) --------------------------------
+// Every 10 s with a
+// mission running: the commands the mission scripts ran (opcode x count,
+// most first: a script stuck in a loop shows the loop), the cars and peds
+// of the world; and right away the random car queries (the vigilante's
+// criminals) and the models a script waits more than 5 s for.
+static uint16 ps3MissionOps[0x800];
+static uint32 ps3MissionOpsTotal, ps3MissionLogMs;
+static char ps3MissionNames[48];
+
+static void
+PS3_ScriptCountOp(CRunningScript *s, int32 command)
+{
+	if (!s->m_bIsMissionScript)
+		return;
+	if (command >= 0 && command < 0x800 && ps3MissionOps[command] < 0xFFFF)
+		ps3MissionOps[command]++;
+	ps3MissionOpsTotal++;
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	if (strstr(ps3MissionNames, name) == nil && strlen(ps3MissionNames) + strlen(name) + 2 < sizeof(ps3MissionNames)) {
+		if (ps3MissionNames[0])
+			strcat(ps3MissionNames, " ");
+		strcat(ps3MissionNames, name);
+	}
+}
+
+static void
+PS3_ScriptReport(void)
+{
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	if (ps3MissionLogMs == 0 || now < ps3MissionLogMs) {
+		ps3MissionLogMs = now;
+		return;
+	}
+	if (now - ps3MissionLogMs < 10000)
+		return;
+	ps3MissionLogMs = now;
+	if (ps3MissionOpsTotal) {
+		char line[400];
+		int len = snprintf(line, sizeof(line), "[script] mission (%s) in 10 s: %u commands; most run (opcode x count):",
+		                   ps3MissionNames, ps3MissionOpsTotal);
+		for (int k = 0; k < 12 && len < (int)sizeof(line) - 16; k++) {
+			int best = -1;
+			for (int i = 0; i < 0x800; i++)
+				if (ps3MissionOps[i] && (best < 0 || ps3MissionOps[i] > ps3MissionOps[best]))
+					best = i;
+			if (best < 0)
+				break;
+			len += snprintf(line + len, sizeof(line) - len, " %04x x%u", best, ps3MissionOps[best]);
+			ps3MissionOps[best] = 0;
+		}
+		PS3_Log(line);
+		PS3_Logf("[script]   world: vehicles %d of %d (random %d, mission %d, parked %d, police %d; cap %d, density %.2f), peds %d (mission %u; cap %d), streaming %.1f of %.1f MB, %d models requested",
+		         CPools::GetVehiclePool()->GetNoOfUsedSpaces(), CPools::GetVehiclePool()->GetSize(),
+		         CCarCtrl::NumRandomCars, CCarCtrl::NumMissionCars, CCarCtrl::NumParkedCars, CCarCtrl::NumLawEnforcerCars,
+		         CCarCtrl::MaxNumberOfCarsInUse, CCarCtrl::CarDensityMultiplier,
+		         CPools::GetPedPool()->GetNoOfUsedSpaces(), CPopulation::ms_nTotalMissionPeds, CPopulation::MaxNumberOfPedsInUse,
+		         CStreaming::ms_memoryUsed / 1048576.0f, CStreaming::ms_memoryAvailable / 1048576.0f, CStreaming::ms_numModelsRequested);
+	}
+	memset(ps3MissionOps, 0, sizeof(ps3MissionOps));
+	ps3MissionOpsTotal = 0;
+	ps3MissionNames[0] = '\0';
+}
+
+// GET_RANDOM_CAR_OF_TYPE_IN_AREA (and _NO_SAVE) from a mission: found or
+// not, and how many cars it took (the command marks every random car of
+// the area as a mission car, not only the one it returns). One line a
+// second at most (the scripts ask every frame until there is one).
+void
+PS3_ScriptCarQuery(CRunningScript *s, const char *what, int32 handle, int32 marked, float x1, float y1, float x2, float y2, int32 model)
+{
+	if (!s->m_bIsMissionScript)
+		return;
+	static uint32 lastMs, calls, found;
+	calls++;
+	if (handle >= 0)
+		found++;
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	if (handle < 0 && now - lastMs < 1000 && now >= lastMs)
+		return;
+	lastMs = now;
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	PS3_Logf("[script] %s %s area (%.0f, %.0f)-(%.0f, %.0f) model %d: %s (car %d, %d cars made mission cars; %u asks, %u found since the last line); vehicles %d, random %d, mission %d",
+	         name, what, x1, y1, x2, y2, model, handle >= 0 ? "found" : "none", handle, marked, calls, found,
+	         CPools::GetVehiclePool()->GetNoOfUsedSpaces(), CCarCtrl::NumRandomCars, CCarCtrl::NumMissionCars);
+	calls = found = 0;
+}
+
+// HAS_MODEL_LOADED false for more than 5 s (then every 10 s): the model's
+// streaming state
+void
+PS3_ScriptModelWait(CRunningScript *s, int32 model, bool loaded)
+{
+	static struct { CRunningScript *s; int32 model; uint32 since, logged; } w[8];
+	uint32 now = CTimer::GetTimeInMilliseconds();
+	int slot = -1, free = -1;
+	for (int i = 0; i < 8; i++) {
+		if (w[i].s == s && w[i].model == model) { slot = i; break; }
+		if (w[i].s == nil && free < 0) free = i;
+		else if (w[i].s && now - w[i].since > 60000 && free < 0) free = i;	// stale
+	}
+	if (loaded) {
+		if (slot >= 0) {
+			if (w[slot].logged) {
+				char name[9];
+				memcpy(name, s->m_abScriptName, 8);
+				name[8] = '\0';
+				PS3_Logf("[script] %s: model %d loaded after %.1f s", name, model, (now - w[slot].since) / 1000.0f);
+			}
+			w[slot].s = nil;
+		}
+		return;
+	}
+	if (slot < 0) {
+		if (free < 0)
+			return;
+		w[free].s = s;
+		w[free].model = model;
+		w[free].since = now;
+		w[free].logged = 0;
+		return;
+	}
+	if (now - w[slot].since < 5000 || (w[slot].logged && now - w[slot].logged < 10000))
+		return;
+	w[slot].logged = now;
+	char name[9];
+	memcpy(name, s->m_abScriptName, 8);
+	name[8] = '\0';
+	CStreamingInfo &si = CStreaming::ms_aInfoForModel[model];
+	CBaseModelInfo *mi = model >= 0 && model < MODELINFOSIZE ? CModelInfo::GetModelInfo(model) : nil;
+	PS3_Logf("[script] %s waits %.0f s for model %d (%s): load state %d, flags 0x%x; streaming %.1f of %.1f MB, %d models requested",
+	         name, (now - w[slot].since) / 1000.0f, model, mi ? mi->GetModelName() : "?", si.m_loadState, si.m_flags,
+	         CStreaming::ms_memoryUsed / 1048576.0f, CStreaming::ms_memoryAvailable / 1048576.0f, CStreaming::ms_numModelsRequested);
+}
+
 static inline bool
 GlobalVarOk(uint32 index)
 {
@@ -2042,6 +2181,9 @@ void CTheScripts::Process()
 {
 	if (CReplay::IsPlayingBack())
 		return;
+#ifdef __PS3__
+	PS3_ScriptReport();
+#endif
 	CommandsExecuted = 0;
 	ScriptsUpdated = 0;
 	float timeStep = CTimer::GetTimeStepInMilliseconds();
@@ -2203,6 +2345,7 @@ int8 CRunningScript::ProcessOneCommand()
 	m_bNotFlag = (command & 0x8000);
 	command &= 0x7FFF;
 #ifdef __PS3__
+	PS3_ScriptCountOp(this, command);
 	PS3_ScriptCrumb(m_abScriptName, command, m_nIp - 2);
 #endif
 #ifdef USE_ADVANCED_SCRIPT_DEBUG_OUTPUT

@@ -132,6 +132,9 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 	{
 		CollectParameters(&m_nIp, 5);
 		int handle = -1;
+#ifdef __PS3__
+		int32 ps3Marked = 0;
+#endif
 		uint32 i = CPools::GetVehiclePool()->GetSize();
 		float infX = *(float*)&ScriptParams[0];
 		float infY = *(float*)&ScriptParams[1];
@@ -153,7 +156,13 @@ int8 CRunningScript::ProcessCommands800To899(int32 command)
 			--CCarCtrl::NumRandomCars;
 			if (m_bIsMissionScript)
 				CTheScripts::MissionCleanUp.AddEntityToList(handle, CLEANUP_CAR);
+#ifdef __PS3__
+			ps3Marked++;
+#endif
 		}
+#ifdef __PS3__
+		PS3_ScriptCarQuery(this, "GET_RANDOM_CAR_OF_TYPE_IN_AREA", handle, ps3Marked, infX, infY, supX, supY, ScriptParams[4]);
+#endif
 		ScriptParams[0] = handle;
 		StoreParameters(&m_nIp, 1);
 		return 0;

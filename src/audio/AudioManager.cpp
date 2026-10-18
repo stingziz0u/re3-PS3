@@ -10,6 +10,9 @@
 #include "sampman.h"
 #include "Camera.h"
 #include "World.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 
 cAudioManager AudioManager;
 
@@ -146,6 +149,11 @@ cAudioManager::CreateEntity(eAudioType type, void *entity)
 			return i;
 		}
 	}
+#ifdef __PS3__
+	static int ps3NoSlot;
+	if (ps3NoSlot++ < 8)
+		PS3_Logf("[audio] no free audio entity (all %d used) for type %d", NUM_AUDIOENTITIES, (int)type);
+#endif
 	return AEHANDLE_ERROR_NOFREESLOT;
 }
 
@@ -192,6 +200,19 @@ cAudioManager::PlayOneShot(int32 index, uint16 sound, float vol)
 							entity.m_AudioEvents = 1;
 							m_sAudioScriptObjectManager.m_anScriptObjectEntityIndices[m_sAudioScriptObjectManager.m_nScriptObjectEntityTotal++] = index;
 						}
+#ifdef __PS3__
+						else {
+							// too many one-shot sounds already this frame: the original
+							// kept the entity and its object for ever, one more audio
+							// entity gone each time (from reVC-PS3 patch 57)
+							static int ps3Full;
+							if (ps3Full++ < 8)
+								PS3_Logf("[audio] %d one-shot sounds this frame: sound %d dropped", NUM_SCRIPT_MAX_ENTITIES, sound);
+							delete (cAudioScriptObject *)entity.m_pEntity;
+							entity.m_pEntity = nil;
+							DestroyEntity(index);
+						}
+#endif
 					} else {
 						int32 i = 0;
 						while (true) {
@@ -473,7 +494,20 @@ cAudioManager::ServiceSoundEffects()
 #if defined(AUDIO_OAL) || defined(AUDIO_PS3)
 	SampleManager.Service();
 #endif
+	PS3_CRUMB("audio: script objects", m_sAudioScriptObjectManager.m_nScriptObjectEntityTotal);
 	for (int32 i = 0; i < m_sAudioScriptObjectManager.m_nScriptObjectEntityTotal; ++i) {
+#ifdef __PS3__
+		int32 ps3Id = m_sAudioScriptObjectManager.m_anScriptObjectEntityIndices[i];
+		if (ps3Id < 0 || ps3Id >= NUM_AUDIOENTITIES || !m_asAudioEntities[ps3Id].m_bIsUsed ||
+		    m_asAudioEntities[ps3Id].m_nType != AUDIOTYPE_SCRIPTOBJECT) {
+			static int ps3BadObj;
+			if (ps3BadObj++ < 8)
+				PS3_Logf("[audio] one-shot sound entity %d is not one (used %d type %d): left alone", ps3Id,
+				         ps3Id >= 0 && ps3Id < NUM_AUDIOENTITIES ? m_asAudioEntities[ps3Id].m_bIsUsed : -1,
+				         ps3Id >= 0 && ps3Id < NUM_AUDIOENTITIES ? (int)m_asAudioEntities[ps3Id].m_nType : -1);
+			continue;
+		}
+#endif
 		cAudioScriptObject *object = (cAudioScriptObject *)m_asAudioEntities[m_sAudioScriptObjectManager.m_anScriptObjectEntityIndices[i]].m_pEntity;
 		delete object;
 		m_asAudioEntities[m_sAudioScriptObjectManager.m_anScriptObjectEntityIndices[i]].m_pEntity = nil;
@@ -855,6 +889,7 @@ cAudioManager::ProcessActiveQueues()
 			}
 		}
 	}
+	PS3_CRUMB("audio: queues stop", m_SampleRequestQueuesStatus[m_nActiveSampleQueue]);
 	for (int32 i = 0; i < m_nActiveSamples; i++) {
 		if (m_asActiveSamples[i].m_nSampleIndex != NO_SAMPLE && !m_asActiveSamples[i].m_bIsProcessed) {
 			SampleManager.StopChannel(i);
@@ -864,6 +899,15 @@ cAudioManager::ProcessActiveQueues()
 	}
 	for (uint8 i = 0; i < m_SampleRequestQueuesStatus[m_nActiveSampleQueue]; ++i) {
 		tSound &sample = m_asSamples[m_nActiveSampleQueue][m_abSampleQueueIndexTable[m_nActiveSampleQueue][i]];
+#ifdef __PS3__
+		if (sample.m_nEntityIndex < 0 || sample.m_nEntityIndex >= NUM_AUDIOENTITIES) {
+			static int ps3BadEnt;
+			if (ps3BadEnt++ < 8)
+				PS3_Logf("[audio] queued sound %d with entity %d: skipped", (int)sample.m_nSampleIndex, (int)sample.m_nEntityIndex);
+			continue;
+		}
+		PS3_CRUMB("audio: start sample|bank<<16|entity<<24", (int)sample.m_nSampleIndex | sample.m_nBankIndex << 16 | sample.m_nEntityIndex << 24);
+#endif
 		if (!sample.m_bIsProcessed && !sample.m_bLoopEnded && m_asAudioEntities[sample.m_nEntityIndex].m_bIsUsed && sample.m_nSampleIndex < NO_SAMPLE) {
 			if (sample.m_nCounter > 255 && sample.m_nLoopCount && sample.m_nLoopsRemaining) {
 				--sample.m_nLoopsRemaining;
@@ -923,6 +967,7 @@ cAudioManager::ProcessActiveQueues()
 			}
 		}
 	}
+	PS3_CRUMB("audio: queues done", 0);
 }
 
 void

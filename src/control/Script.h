@@ -29,6 +29,10 @@ void ScriptBroken(const char *file, int line);
 // cleanup deleted...): on the PS3 the script stops instead of using nil
 #define script_check(p) do { if (!(p)) { script_bad(); return 0; } } while(0)
 #define script_checkv(p) do { if (!(p)) { script_bad(); return; } } while(0)
+// what a mission asks of the world (Script.cpp, from reVC-PS3 patch 50)
+class CRunningScript;
+void PS3_ScriptCarQuery(CRunningScript *s, const char *what, int32 handle, int32 marked, float x1, float y1, float x2, float y2, int32 model);
+void PS3_ScriptModelWait(CRunningScript *s, int32 model, bool loaded);
 #else
 #define script_bad() script_assert(0)
 #define script_check(p) script_assert(p)

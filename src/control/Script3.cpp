@@ -761,6 +761,10 @@ int8 CRunningScript::ProcessCommands500To599(int32 command)
 		if (model < 0)
 			model = CTheScripts::UsedObjectArray[-model].index;
 		UpdateCompareFlag(CStreaming::HasModelLoaded(model));
+#ifdef __PS3__
+		if (model >= 0 && model < NUMSTREAMINFO && m_bIsMissionScript)
+			PS3_ScriptModelWait(this, model, CStreaming::HasModelLoaded(model));
+#endif
 		return 0;
 	}
 	case COMMAND_MARK_MODEL_AS_NO_LONGER_NEEDED:

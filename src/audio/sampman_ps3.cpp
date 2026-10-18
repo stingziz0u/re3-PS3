@@ -1375,10 +1375,10 @@ cSampleManager::GetBankContainingSound(uint32 offset)
 	return INVALID_SFX_BANK;
 }
 
-int32 cSampleManager::GetSampleBaseFrequency(uint32 nSample) { return m_aSamples[nSample].nFrequency; }
-int32 cSampleManager::GetSampleLoopStartOffset(uint32 nSample) { return m_aSamples[nSample].nLoopStart; }
-int32 cSampleManager::GetSampleLoopEndOffset(uint32 nSample) { return m_aSamples[nSample].nLoopEnd; }
-uint32 cSampleManager::GetSampleLength(uint32 nSample) { return m_aSamples[nSample].nSize / sizeof(uint16); }
+int32 cSampleManager::GetSampleBaseFrequency(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nFrequency; }
+int32 cSampleManager::GetSampleLoopStartOffset(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nLoopStart; }
+int32 cSampleManager::GetSampleLoopEndOffset(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nLoopEnd; }
+uint32 cSampleManager::GetSampleLength(uint32 nSample) { if(nSample >= TOTAL_AUDIO_SAMPLES) return 0; return m_aSamples[nSample].nSize / sizeof(uint16); }
 
 bool cSampleManager::UpdateReverb(void) { return false; }
 void cSampleManager::SetChannelReverbFlag(uint32 nChannel, uint8 nReverbFlag) { (void)nChannel; (void)nReverbFlag; }
@@ -1390,9 +1390,21 @@ cSampleManager::InitialiseChannel(uint32 nChannel, uint32 nSfx, uint8 nBank)
 	if(nChannel >= MAXCHANNELS+MAX2DCHANNELS || nSfx >= TOTAL_AUDIO_SAMPLES)
 		return false;
 	if(nSfx < SAMPLEBANK_MAX){
-		if(!IsSampleBankLoaded(nBank))
+		if(nBank >= MAX_SFX_BANKS || !IsSampleBankLoaded(nBank)){
+			static int logged;
+			if(nBank >= MAX_SFX_BANKS && logged++ < 8)
+				PS3_Logf("[audio] sound %u asked for bank %u: not played", nSfx, nBank);
 			return false;
-		addr = nSampleBankMemoryStartAddress[nBank] + m_aSamples[nSfx].nOffset - m_aSamples[BankStartOffset[nBank]].nOffset;
+		}
+		uint32 rel = m_aSamples[nSfx].nOffset - m_aSamples[BankStartOffset[nBank]].nOffset;
+		if(m_aSamples[nSfx].nOffset < m_aSamples[BankStartOffset[nBank]].nOffset ||
+		   rel + m_aSamples[nSfx].nSize > (uint32)nSampleBankSize[nBank]){
+			static int logged;
+			if(logged++ < 8)
+				PS3_Logf("[audio] sound %u (bank %u) is outside its bank: not played", nSfx, nBank);
+			return false;
+		}
+		addr = nSampleBankMemoryStartAddress[nBank] + rel;
 	}else{
 		int32 slot = _GetPedCommentSlot(nSfx);
 		if(slot < 0)
