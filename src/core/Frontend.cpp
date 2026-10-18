@@ -36,6 +36,20 @@
 #include "Messages.h"
 #include "FileLoader.h"
 #include "frontendoption.h"
+#ifdef __PS3__
+#include <sys/systime.h>
+#include "ps3_platform.h"
+#ifdef RW_PS3_RSX
+#include "src/ps3/rwps3.h"
+#endif
+// Pausing took 1-2 s here, against a few ms in reVC-PS3 (Ren): III's
+// frontend, menu and button TXDs are 8 bit palettized, not DXT like Vice
+// City's, so every pause expanded, swizzled and (with the MIPMAPS option)
+// made mip levels of ~75 textures again: one frame of ~950 ms in the log.
+// The menu's textures now stay loaded after the first pause (about 10 MB
+// of VRAM), and are loaded without made mip levels (drawn at 1:1).
+static bool gPS3MenuTexturesKept;
+#endif
 
 // Game has colors inlined in code.
 // For easier modification we collect them here:
@@ -3616,6 +3630,23 @@ CMenuManager::LoadAllTextures()
 	} else if (m_PrefsRadioStation > CHATTERBOX)
 		m_PrefsRadioStation = CGeneral::GetRandomNumber() % (CHATTERBOX + 1);
 	
+#ifdef __PS3__
+	if (gPS3MenuTexturesKept) {
+		// still loaded from the last pause: only the menu's own start
+		m_bSpritesLoaded = true;
+#ifdef MENU_MAP
+		fMapSize = SCREEN_HEIGHT * 2.0f;
+		fMapCenterX = 0.0f;
+		fMapCenterY = 0.0f;
+#endif
+		return;
+	}
+	uint64 ps3T0 = sysGetSystemTime();
+#ifdef RW_PS3_RSX
+	bool ps3Mips = rw::ps3::forceMipmaps;
+	rw::ps3::forceMipmaps = false;
+#endif
+#endif
 	CFileMgr::SetDir("");
 	//CFileMgr::SetDir("");
 	CTimer::Stop();
@@ -3691,6 +3722,13 @@ CMenuManager::LoadAllTextures()
 #endif
 	m_bSpritesLoaded = true;
 	CTxdStore::PopCurrentTxd();
+#ifdef __PS3__
+#ifdef RW_PS3_RSX
+	rw::ps3::forceMipmaps = ps3Mips;
+#endif
+	PS3_Logf("[menu] frontend textures loaded in %u ms (kept for the next pauses)",
+	         (uint32)((sysGetSystemTime() - ps3T0) / 1000));
+#endif
 }
 
 #ifdef GAMEPAD_MENU
@@ -4346,7 +4384,16 @@ CMenuManager::Process(void)
 		}
 
 	} else {
+#ifdef __PS3__
+		// closed: the textures stay for the next pause (UnloadTextures
+		// still frees them on a restart / shutdown)
+		if (m_bSpritesLoaded) {
+			m_bSpritesLoaded = false;
+			gPS3MenuTexturesKept = true;
+		}
+#else
 		UnloadTextures();
+#endif
 		m_bRenderGameInMenu = false;
 		// byte_5F33E4 = 1;	// unused
 		ChangeScreen(MENUPAGE_NONE, 0, false, false);
@@ -5836,8 +5883,14 @@ CMenuManager::SwitchMenuOnAndOff()
 void
 CMenuManager::UnloadTextures()
 {
+#ifdef __PS3__
+	if (!m_bSpritesLoaded && !gPS3MenuTexturesKept)
+		return;
+	gPS3MenuTexturesKept = false;
+#else
 	if (!m_bSpritesLoaded)
 		return;
+#endif
 
 	printf("REMOVE frontend\n");
 	for (int i = 0; i < ARRAY_SIZE(FrontendFilenames); ++i)
