@@ -118,6 +118,7 @@ struct Ps3Raster
 	int8    tile;		// camera / depth buffer: tile region + 1 (0 linear)
 	bool    zcomp, zcull;
 	uint8   vramFmt;	// PS3_VRAM_*: how the texels are kept in VRAM
+	uint8   vramDXT;	// 1 / 5: an RGBA texture compressed into DXT for VRAM (it didn't fit as it was)
 	bool    forcedMips;	// the MIPMAPS option added the mip levels
 	int8    pendingJobs;	// levels queued for the texture thread (stage 2)
 	// hardware probe (USRDIR/probe.txt): a texture described as is, its
@@ -221,6 +222,7 @@ struct RasterStats
 	int32  numDXT;
 	int32  numExpanded;	// palettized / 16 / 24 bit turned into RGBA8
 	int32  noVram;		// textures left without storage: VRAM was full
+	int32  packedDXT;	// RGBA textures compressed into DXT because VRAM was full
 };
 extern RasterStats rasterStats;
 

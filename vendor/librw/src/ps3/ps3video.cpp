@@ -534,9 +534,9 @@ logStats(void)
 	       s.draws/n, s.verts/n, s.indices/n, s.vpSwitches/n, s.fpSwitches/n, s.texBinds/n,
 	       s.constUploads/n, s.ringBytes/1024/n);
 	rsxLog("[rsx]   VRAM %u/%u MB in %u blocks; textures uploaded %u KB/s; instanced %u; dropped %u; ring peak %u KB; "
-	       "streaming evictions %u; textures without VRAM %d",
+	       "streaming evictions %u; textures without VRAM %d; kept as DXT (VRAM full) %d",
 	       used>>20, total>>20, blocks, (uint32)(s.texUploadBytes/1024/10), s.instanced, s.dropped, ringPeak>>10,
-	       vramEvictions, rasterStats.noVram);
+	       vramEvictions, rasterStats.noVram, rasterStats.packedDXT);
 	rsxLog("[rsx]   frames over 20 ms: %u, over 50 ms: %u, worst %.1f ms",
 	       slowFrames, verySlowFrames, worstFrameUs/1000.0);
 	TexProfile &t = texProfile;

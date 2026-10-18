@@ -152,10 +152,13 @@ Anything made for the PC version of GTA III as data files works:
 
 Limits: on the PS3 DXT textures (power of two sizes) stay compressed, as on
 the PC, and every other texture takes 4 bytes per pixel (uncompressed) in
-the RSX's 216 MB, so a pack of uncompressed textures that raises
-*everything* to 1024×1024 can run out of video memory (models get dropped, textures turn white). The largest
-texture size is 4096×4096. Code mods (CLEO, ASI, plugins that patch the
-executable) and unconverted assets from other games or platforms don't work.
+the RSX's 216 MB. When video memory runs out (a pack of uncompressed HD
+textures, e.g. a 64-tile HD map), the textures that don't fit any more are
+compressed into DXT as they load (4 to 8 times smaller, a little less
+sharp) instead of turning white; for the best quality, use DXT textures in
+the pack. The largest texture size is 4096×4096. Code mods (CLEO, ASI,
+plugins that patch the executable) and unconverted assets from other games
+or platforms don't work.
 
 ## Troubleshooting
 

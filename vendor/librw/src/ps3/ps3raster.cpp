@@ -444,7 +444,8 @@ allocateTexels(Raster *raster, Ps3Raster *natras)
 	if(natras->vramFmt == PS3_VRAM_DXT){
 		// the blocks, level after level (allocateDXT only picks this for
 		// power of two sizes). The SWZ format bit: the levels repeat
-		int32 bs = natras->texFormat == PS3_TEX_DXT1 ? 8 : 16;
+		int32 bs = natras->vramDXT ? (natras->vramDXT == 1 ? 8 : 16) :
+		           natras->texFormat == PS3_TEX_DXT1 ? 8 : 16;
 		natras->swizzled = true;
 		if(natras->numLevels > 13)
 			natras->numLevels = 13;
@@ -937,6 +938,8 @@ static void encodeDXT(int32 dxt, const uint8 *rgba, int32 w, int32 h, uint8 *out
 static inline int32
 rasterDXT(Ps3Raster *natras)
 {
+	if(natras->vramDXT)
+		return natras->vramDXT;
 	return natras->texFormat == PS3_TEX_DXT1 ? 1 :
 	       natras->texFormat == PS3_TEX_DXT3 ? 3 : 5;
 }
@@ -1417,6 +1420,14 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 	int32 h = levelDim(raster->originalHeight, level);
 	bool mips = level == 0 && natras->autogenMipmap && natras->numLevels > 1;
 	uint8 *rgba = src;
+	if(natras->vramFmt == PS3_VRAM_DXT && natras->vramDXT){
+		// an RGBA texture kept as DXT (VRAM was full): compressed here,
+		// the mip levels too
+		encodeDXTLevel(raster, natras, level, src, cx);
+		if(mips && natras->vram)
+			uploadMipChain(raster, natras, src, 0, cx);
+		return;
+	}
 	if(natras->vramFmt == PS3_VRAM_DXT){
 		// native DXT: the game's blocks as they are; the MIPMAPS option's
 		// levels made from them and compressed again
@@ -1727,7 +1738,7 @@ texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src)
 		return false;
 	// native DXT with nothing to make: only a copy into VRAM, quicker than
 	// queuing it (in order: none of its levels queued before it)
-	if(natras->vramFmt == PS3_VRAM_DXT && natras->pendingJobs == 0 &&
+	if(natras->vramFmt == PS3_VRAM_DXT && !natras->vramDXT && natras->pendingJobs == 0 &&
 	   !(level == 0 && natras->autogenMipmap && natras->numLevels > 1))
 		return false;
 	// a loading screen queues a whole island: the buffers waiting would
@@ -1754,7 +1765,7 @@ texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src)
 	j->level = level;
 	j->src = src;
 	// the work, in texels converted (a native DXT level is only copied)
-	j->texels = (natras->vramFmt == PS3_VRAM_DXT ? w*h/16 : w*h) + (mip ? w*h/3 : 0);
+	j->texels = (natras->vramFmt == PS3_VRAM_DXT && !natras->vramDXT ? w*h/16 : w*h) + (mip ? w*h/3 : 0);
 	j->state = TJ_QUEUED;
 	j->validBits = 0;
 	j->next = nil;
@@ -1955,8 +1966,8 @@ rasterBindInfo(Raster *raster, gcmTexture *tex, bool *swizzled, int32 *numLevels
 	tex->format = (natras->vramFmt == PS3_VRAM_RGB565 ? GCM_TEXTURE_FORMAT_R5G6B5 :
 	               natras->vramFmt == PS3_VRAM_ARGB1555 ? GCM_TEXTURE_FORMAT_A1R5G5B5 :
 	               natras->vramFmt == PS3_VRAM_DXT ?
-	                 (natras->texFormat == PS3_TEX_DXT1 ? GCM_TEXTURE_FORMAT_DXT1 :
-	                  natras->texFormat == PS3_TEX_DXT3 ? GCM_TEXTURE_FORMAT_DXT23 : GCM_TEXTURE_FORMAT_DXT45) :
+	                 (rasterDXT(natras) == 1 ? GCM_TEXTURE_FORMAT_DXT1 :
+	                  rasterDXT(natras) == 3 ? GCM_TEXTURE_FORMAT_DXT23 : GCM_TEXTURE_FORMAT_DXT45) :
 	               GCM_TEXTURE_FORMAT_A8R8G8B8) |
 		(natras->swizzled ? GCM_TEXTURE_FORMAT_SWZ : GCM_TEXTURE_FORMAT_LIN);
 	tex->mipmap = n;
@@ -2007,7 +2018,7 @@ rasterCrc(Raster *raster)
 	                                : natras->pitch*raster->parent->originalHeight/4;
 	if(natras->vramFmt == PS3_VRAM_DXT)
 		words = dxtLevelBytes(raster->parent->originalWidth, raster->parent->originalHeight,
-		                      natras->texFormat == PS3_TEX_DXT1 ? 8 : 16)/4;
+		                      rasterDXT(natras) == 1 ? 8 : 16)/4;
 	else if(natras->vramFmt != PS3_VRAM_ARGB8 && natras->swizzled)
 		words /= 2;
 	volatile uint32 *p = (volatile uint32*)natras->vram;
@@ -2276,7 +2287,28 @@ rasterCreateTexture(Raster *raster)
 	natras->autogenMipmap = (raster->format & (Raster::MIPMAP|Raster::AUTOMIPMAP)) == (Raster::MIPMAP|Raster::AUTOMIPMAP);
 	forceMipChain(raster, natras);
 
+#ifdef RW_PS3_RSX
+	// VRAM full for an RGBA texture as it is (HD texture packs: a map of 64
+	// 512x512 tiles is 87 MB in RGBA8, Ren's re3 log): compressed into DXT
+	// it takes 4 (alpha, DXT5) or 8 times (DXT1) less, instead of drawing
+	// white. Power of two sizes, 4x4 or more, as the RSX's DXT needs.
+	if(!allocateTexels(raster, natras) && dxtNative && natras->vram == nil &&
+	   isPow2(raster->width) && isPow2(raster->height) && raster->width >= 4 && raster->height >= 4){
+		natras->vramFmt = PS3_VRAM_DXT;
+		natras->vramDXT = natras->hasAlpha ? 5 : 1;
+		if(allocateTexels(raster, natras)){
+			if(rasterStats.packedDXT++ < 5)
+				printf("[rsx] VRAM full: a %dx%d texture kept as DXT%d instead\n",
+				       raster->width, raster->height, natras->vramDXT);
+			return raster;
+		}
+		natras->vramFmt = PS3_VRAM_ARGB8;
+		natras->vramDXT = 0;
+	}
+	if(natras->vram == nil){
+#else
 	if(!allocateTexels(raster, natras)){
+#endif
 #ifdef RW_PS3_RSX
 		// VRAM full: keep the raster without storage (it draws white)
 		// instead of failing the whole TXD; a nil raster here was a crash
@@ -2410,6 +2442,7 @@ rasterCreate(Raster *raster)
 	natras->numLevels = 1;
 	natras->texFormat = PS3_TEX_NONE;
 	natras->vramFmt = PS3_VRAM_ARGB8;
+	natras->vramDXT = 0;
 	natras->lockedLevel = -1;
 
 	Raster *ret = raster;
