@@ -65,10 +65,12 @@ PlayStation button icons and the controller picture of the settings page).
   on-screen help.
 - **Map** in the pause menu, Vice City style: the game's radar tiles, every
   safehouse, Ammu-Nation, Pay 'n' Spray and bomb shop, waypoints with X.
-- **Collectibles on the map** (*Display > Hidden packages on map / Rampages
-  on map*, off by default): the hidden packages in lime green and the
-  rampages in blood red, on the radar (the nearest one at its edge when none
-  is in range) and the pause menu map. One you pick up (or pass) disappears.
+- **Collectibles on the map** (*Display > Hidden packages / Rampages / Unique
+  jumps on map*, each off by default): hidden packages in lime green,
+  rampages in blood red and unique jumps (at the take-off) in orange, on the
+  radar (the nearest one at its edge when none is in range) and the pause
+  menu map. One you pick up, pass or jump disappears. The jumps come from the
+  original `main.scm`: with a modified one they aren't shown.
 - **Car spawner** (for testing, off unless there is a file named
   `carspawner.txt` in `USRDIR`, any content): L3 + R3 together on foot. The
   vehicle shows as "ID: name" over the subtitles; Left/Right go one by one,

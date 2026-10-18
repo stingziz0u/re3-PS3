@@ -157,7 +157,7 @@ const char *filterNames[] = { "FEM_NON", "FEM_SIM", "FEM_NRM", "FEM_MOB" };
 const char *off_on[] = { "FEM_OFF", "FEM_ON" };
 #ifdef __PS3__
 // Display: collectibles on the radar and the map (Radar.cpp)
-extern int8 gPS3MapPackages, gPS3MapRampages;
+extern int8 gPS3MapPackages, gPS3MapRampages, gPS3MapJumps;
 #endif
 
 void RestoreDefGraphics(int8 action) {
@@ -225,6 +225,7 @@ void RestoreDefDisplay(int8 action) {
 	#ifdef __PS3__
 		gPS3MapPackages = 0;
 		gPS3MapRampages = 0;
+		gPS3MapJumps = 0;
 	#endif
 	#ifdef GRAPHICS_MENU_OPTIONS // otherwise Frontend will handle those
 		CMenuManager::m_PrefsBrightness = 256;
@@ -543,6 +544,7 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 #ifdef __PS3__
 		MENUACTION_CFO_SELECT,	"FED_MHP", { new CCFOSelect((int8*)&gPS3MapPackages, "Display", "HiddenPackagesOnMap", off_on, 2, false) },
 		MENUACTION_CFO_SELECT,	"FED_MRP", { new CCFOSelect((int8*)&gPS3MapRampages, "Display", "RampagesOnMap", off_on, 2, false) },
+		MENUACTION_CFO_SELECT,	"FED_MUJ", { new CCFOSelect((int8*)&gPS3MapJumps, "Display", "UniqueJumpsOnMap", off_on, 2, false) },
 #endif
 		SCREEN_FIT_SELECTOR
 		MENUACTION_CFO_DYNAMIC,	"FET_DEF", { new CCFODynamic(nil, nil, nil, nil, RestoreDefDisplay) },
