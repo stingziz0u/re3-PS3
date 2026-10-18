@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.2 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.3 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, but it hasn't had long play-throughs yet. Expect bugs and
 > please report them with the log (see [Troubleshooting](#troubleshooting)).
@@ -37,6 +37,16 @@ your own PC copy.
 > crash from deleted objects left in the physics list and other stale
 > pointers, and after a crash the game goes back to the XMB instead of
 > freezing the console.
+>
+> 1.3 alpha brings what [reVC-PS3](https://github.com/stingziz0u/reVC-PS3)
+> 1.4 found: the hidden packages and rampages on the radar and the map
+> (optional), a car spawner (L3 + R3), the vehicle rampages get the traffic
+> they need, mission cars no longer deleted under the mission script, the
+> police sirens switch on with a tap of L3 at 60 fps, and the player no
+> longer stays stuck in the air between objects (see
+> [Changes from the original](#changes-from-the-original)). The log now
+> records what a mission script waits for, the pools every 10 s, and more
+> of the audio.
 
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
@@ -59,6 +69,11 @@ PlayStation button icons and the controller picture of the settings page).
   on map*, off by default): the hidden packages in lime green and the
   rampages in blood red, on the radar (the nearest one at its edge when none
   is in range) and the pause menu map. One you pick up (or pass) disappears.
+- **Car spawner**: L3 + R3 together on foot. The vehicle shows as "ID:
+  name" over the subtitles; Left/Right go one by one, L1/R1 by 10 (hold to
+  scroll), X puts you in it, O closes. Boats go on the water in front of you
+  (up to 30 m). Trains, helicopters, planes and the RC Bandit aren't in the
+  list.
 - **MP3 player radio**: put `.mp3` files in `USRDIR/mp3`.
 - **Skins**: put `.bmp` skins in `USRDIR/skins`, choose them in *Player setup*.
 - DXT textures (most of the PC game's) stay compressed in video memory and
@@ -79,9 +94,28 @@ PlayStation button icons and the controller picture of the settings page).
   bars, FPS counter (*Graphics > Show FPS*).
 - Settings saved in `USRDIR/re3.ini`, saves in `USRDIR/userfiles`.
 
+## Changes from the original
+
+The PS2/PC game was tuned for the PS2's memory: a few things are hard for
+that reason alone. re3-PS3 changes these (everything else plays as the
+original):
+
+- **Vehicle rampages** (blow up N cars of a kind): while one runs, the
+  traffic limits are lifted and the cars of the rampage are asked for, so
+  enough of them come.
+- **Mission cars**: making room for a new mission entity no longer deletes
+  a car a mission script has taken (the script stopped when it looked at
+  it again).
+- **Horn taps**: a tap of L3 shorter than 250 ms switches the sirens, a
+  longer press honks. The original only took presses of 1-3 frames, too
+  short at 60 fps.
+- **Stuck in the air**: when the player is held in the air between objects
+  for a while, he is put on top of what is under him, or back where he
+  last stood.
+
 ## Installation
 
-1. Install `re3-ps3-1.2-alpha.pkg` on a PS3 with homebrew support (CFW or
+1. Install `re3-ps3-1.3-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **re3**.
 2. The PKG creates `/dev_hdd0/game/RE3PS3000/USRDIR` with these empty
@@ -157,7 +191,7 @@ On Linux or WSL (Ubuntu):
    make -C ps3 verify
    ```
 
-   The result is `ps3/re3-ps3-1.2-alpha.pkg`.
+   The result is `ps3/re3-ps3-1.3-alpha.pkg`.
 
 Other targets: `make -C ps3 DEBUG=1` (debug build with asserts),
 `make -C ps3 STAGE=1` (headless test build: loads the game without video,

@@ -50,6 +50,7 @@ struct ProfTimer
 
 void PS3_FxReport(unsigned int frames);	// Particle.cpp
 void PS3_ColReport(unsigned int frames);	// World.cpp
+void PS3_PoolsReport(void);	// World.cpp
 
 static ProfTimer timers[MAX_TIMERS];
 static int numTimers;
@@ -121,6 +122,9 @@ PS3_ProfFrame(void)
 	PS3_FxReport(frames);	// Particle.cpp: what the particles drew
 	PS3_ColReport(frames);	// World.cpp: ProcessCollision's passes and models
 	PS3_LogMemTag("[mem] ");	// heap, free user memory, textures, streaming
+#if PS3_STAGE != 1
+	PS3_PoolsReport();
+#endif
 #if PS3_STAGE != 1
 	{
 		uint64_t ns[GPU_TIMERS], frameNs;

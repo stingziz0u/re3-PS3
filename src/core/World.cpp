@@ -4,6 +4,9 @@
 #include "CopPed.h"
 #include "CutsceneMgr.h"
 #include "DMAudio.h"
+#ifdef __PS3__
+#include "AudioManager.h"
+#endif
 #include "EventList.h"
 #include "Explosion.h"
 #include "Fire.h"
@@ -2297,6 +2300,26 @@ CWorld::UseDetonator(CEntity *pEntity)
 
 #ifdef __PS3__
 // "[col] ..." with the [prof] lines (ps3_prof.cpp, every 10 s)
+// Every 10 s (ps3_prof.cpp): how full the pools are. Something that only
+// grows over hours (an audio entity never given back, an object pool that
+// fills) shows here long before it breaks anything (Cabmageddon, reVC-PS3
+// patch 57: a crash after 2.5 hours, not in a short session).
+void
+PS3_PoolsReport(void)
+{
+	int audio = 0;
+	for (int i = 0; i < NUM_AUDIOENTITIES; i++)
+		if (AudioManager.m_asAudioEntities[i].m_bIsUsed)
+			audio++;
+	PS3_Logf("[pools] audio entities %d of %d (one-shot %d); peds %d of %d, vehicles %d of %d, objects %d of %d, ptr nodes %d of %d, entry nodes %d of %d",
+	         audio, NUM_AUDIOENTITIES, AudioManager.m_sAudioScriptObjectManager.m_nScriptObjectEntityTotal,
+	         CPools::GetPedPool()->GetNoOfUsedSpaces(), CPools::GetPedPool()->GetSize(),
+	         CPools::GetVehiclePool()->GetNoOfUsedSpaces(), CPools::GetVehiclePool()->GetSize(),
+	         CPools::GetObjectPool()->GetNoOfUsedSpaces(), CPools::GetObjectPool()->GetSize(),
+	         CPools::GetPtrNodePool()->GetNoOfUsedSpaces(), CPools::GetPtrNodePool()->GetSize(),
+	         CPools::GetEntryInfoNodePool()->GetNoOfUsedSpaces(), CPools::GetEntryInfoNodePool()->GetSize());
+}
+
 void
 PS3_ColReport(unsigned int frames)
 {

@@ -24,7 +24,7 @@ ifeq ($(strip $(PSL1GHT)),)
   export PSL1GHT := $(PS3DEV)
 endif
 
-VERSION := 1.2-alpha
+VERSION := 1.3-alpha
 STAGE   ?= 2
 DEBUG   ?= 0
 FTRACE  ?= 0
