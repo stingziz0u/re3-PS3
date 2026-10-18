@@ -1,4 +1,4 @@
-// Car spawner: L3 + R3 together on foot opens it, Left/Right go through the
+// Car spawner (only with USRDIR/carspawner.txt): L3 + R3 together on foot opens it, Left/Right go through the
 // vehicles in model order (L1/R1 by 10, held = repeat), X puts the player in
 // the one shown, O closes. The game keeps running underneath; while the
 // spawner is open the pad goes to it, not to the player.
@@ -227,11 +227,28 @@ Consume(void)
 	CPad::GetPad(0)->NewState.Clear();
 }
 
+// Off unless USRDIR/carspawner.txt exists (looked at once, at the first
+// frame): a testing tool, not part of the game.
+static int spEnabled = -1;
+
+static bool
+Enabled(void)
+{
+	if (spEnabled < 0) {
+		FILE *f = fopen(PS3_USRDIR "/carspawner.txt", "rb");
+		spEnabled = f != nil;
+		if (f)
+			fclose(f);
+		PS3_Logf("[spawn] car spawner %s", spEnabled ? "on (carspawner.txt)" : "off (no USRDIR/carspawner.txt)");
+	}
+	return spEnabled;
+}
+
 // CPad::UpdatePads, after pad 0 is read
 void
 PS3_CarSpawnerPad(void)
 {
-	if (FrontEndMenuManager.m_bMenuActive)
+	if (FrontEndMenuManager.m_bMenuActive || !Enabled())
 		return;
 	CPlayerPed *p = FindPlayerPed();
 	unsigned m = PS3_PadButtons();

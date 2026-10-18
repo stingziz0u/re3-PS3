@@ -69,11 +69,12 @@ PlayStation button icons and the controller picture of the settings page).
   on map*, off by default): the hidden packages in lime green and the
   rampages in blood red, on the radar (the nearest one at its edge when none
   is in range) and the pause menu map. One you pick up (or pass) disappears.
-- **Car spawner**: L3 + R3 together on foot. The vehicle shows as "ID:
-  name" over the subtitles; Left/Right go one by one, L1/R1 by 10 (hold to
-  scroll), X puts you in it, O closes. Boats go on the water in front of you
-  (up to 30 m). Trains, helicopters, planes and the RC Bandit aren't in the
-  list.
+- **Car spawner** (for testing, off unless there is a file named
+  `carspawner.txt` in `USRDIR`, any content): L3 + R3 together on foot. The
+  vehicle shows as "ID: name" over the subtitles; Left/Right go one by one,
+  L1/R1 by 10 (hold to scroll), X puts you in it, O closes. Boats go on the
+  water in front of you (up to 30 m). Trains, helicopters, planes and the RC
+  Bandit aren't in the list.
 - **MP3 player radio**: put `.mp3` files in `USRDIR/mp3`.
 - **Skins**: put `.bmp` skins in `USRDIR/skins`, choose them in *Player setup*.
 - DXT textures (most of the PC game's) stay compressed in video memory and
