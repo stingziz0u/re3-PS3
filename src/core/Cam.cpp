@@ -37,6 +37,9 @@ int8 gPS3Sens3rd = 2, gPS3Sens1st = 2;
 static const float gPS3SensMult[] = { 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
 static float PS3_SensMult(int8 i) { return gPS3SensMult[clamp((int)i, 0, (int)ARRAY_SIZE(gPS3SensMult) - 1)]; }
 #define PS3_SENS_3RD * PS3_SensMult(gPS3Sens3rd)
+// Gamepad settings > Aiming: 0 III, 1 Vice City (the lock-on cameras of
+// reVC: the camera looks at the target, not at the player; re3.ini)
+int8 gPS3AimingVC;
 #define PS3_SENS_1ST * PS3_SensMult(gPS3Sens1st)
 #else
 #define PS3_SENS_3RD
@@ -187,6 +190,12 @@ CCam::Process(void)
 		Process_Bill(CameraTarget, TargetOrientation, SpeedVar, TargetSpeedVar);
 		break;
 	case MODE_SYPHON:
+#ifdef __PS3__
+		if(gPS3AimingVC){
+			Process_Syphon_VC(CameraTarget, TargetOrientation, SpeedVar, TargetSpeedVar);
+			break;
+		}
+#endif
 		Process_Syphon(CameraTarget, TargetOrientation, SpeedVar, TargetSpeedVar);
 		break;
 	case MODE_CIRCLE:
@@ -246,6 +255,12 @@ CCam::Process(void)
 		Process_Im_The_Passenger_Woo_Woo(CameraTarget, TargetOrientation, SpeedVar, TargetSpeedVar);
 		break;
 	case MODE_SYPHON_CRIM_IN_FRONT:
+#ifdef __PS3__
+		if(gPS3AimingVC){
+			Process_Syphon_Crim_In_Front_VC(CameraTarget, TargetOrientation, SpeedVar, TargetSpeedVar);
+			break;
+		}
+#endif
 		Process_Syphon_Crim_In_Front(CameraTarget, TargetOrientation, SpeedVar, TargetSpeedVar);
 		break;
 	case MODE_PED_DEAD_BABY:
@@ -3243,6 +3258,216 @@ CCam::Process_Syphon_Crim_In_Front(const CVector &CameraTarget, float, float, fl
 	Front = TargetCoors - Source;
 	GetVectorsReadyForRW();
 }
+
+#ifdef __PS3__
+// ---- Aiming: Vice City ------------------------------------------------------------
+// reVC's Process_Syphon / Process_Syphon_Crim_In_Front (lock-on with a gun).
+// III's camera stands 1.7 m behind the player's shoulder and looks at the
+// player, so the target drifts around the screen; Vice City's stands 2.4 m
+// away, 30 degrees off the line to the target, follows the target's height
+// and looks at the target: it stays in the middle of the screen.
+static const float VC_SYPHON_GROUND_DIST = 2.419f;
+static const float VC_SYPHON_ALPHA_OFFSET = -DEGTORAD(3.0f);
+static const float VC_SYPHON_DEGREE_OFFSET = -DEGTORAD(30.0f);
+static const float VC_SYPHON_Z_OFFSET = -0.5f;
+
+// VC's CCamera::AvoidTheGeometry, the part III has the pieces for: the
+// camera pulled in front of what stands between it and the target, and the
+// near plane brought in when that puts it close to the player
+static void
+PS3_VCAvoidTheGeometry(CEntity *player, const CVector &source, const CVector &target, CVector &newSource)
+{
+	newSource = source;
+	CColPoint point;
+	CEntity *entity = nil;
+	CWorld::pIgnoreEntity = player;
+	if(CWorld::ProcessLineOfSight(target, newSource, point, entity, true, false, false, true, false, false, true)){
+		CVector clip = point.point;
+		newSource = point.point;
+		if(CWorld::ProcessLineOfSight(newSource, target, point, entity, false, true, true, true, false, false, true)){
+			if((newSource - point.point).Magnitude() < RwCameraGetNearClipPlane(Scene.camera))
+				newSource = point.point;
+			else if((newSource - clip).Magnitude() < RwCameraGetNearClipPlane(Scene.camera))
+				newSource = clip;
+		}
+	}
+	CWorld::pIgnoreEntity = nil;
+	float dist = (target - newSource).Magnitude();
+	if(dist - 0.35f < RwCameraGetNearClipPlane(Scene.camera))
+		RwCameraSetNearClipPlane(Scene.camera, Max(dist - 0.35f, 0.05f));
+}
+
+void
+CCam::Process_Syphon_VC(const CVector &CameraTarget, float, float, float)
+{
+	FOV = DefaultFOV;
+
+	if(!CamTargetEntity->IsPed())
+		return;
+
+	static float BetaOffset = VC_SYPHON_DEGREE_OFFSET;
+	static float HeightDown = VC_SYPHON_Z_OFFSET;
+	static float AlphaOffset = VC_SYPHON_ALPHA_OFFSET;
+	CVector TargetCoors;
+	float fAimingDist;
+	float TargetAlpha;
+
+	bool StandingOnMovingThing = false;
+	TargetCoors = CameraTarget;
+	AlphaOffset = VC_SYPHON_ALPHA_OFFSET;
+	float GroundDist = VC_SYPHON_GROUND_DIST;
+
+	while (PS3_ANGLE_OK(Beta) && Beta >= PI) Beta -= 2*PI;
+	while (PS3_ANGLE_OK(Beta) && Beta < -PI) Beta += 2*PI;
+
+	float NewBeta = CGeneral::GetATanOfXY(TheCamera.m_cvecAimingTargetCoors.x - TargetCoors.x, TheCamera.m_cvecAimingTargetCoors.y - TargetCoors.y) + PI;
+	if(ResetStatics){
+		Beta = CGeneral::GetATanOfXY(Source.x - TargetCoors.x, Source.y - TargetCoors.y);
+		ResetStatics = false;
+	}
+	BetaOffset = VC_SYPHON_DEGREE_OFFSET;
+	Beta = NewBeta + BetaOffset;
+	Source = TargetCoors;
+	Source.x += GroundDist*Cos(Beta);
+	Source.y += GroundDist*Sin(Beta);
+	CPhysical *ground = (CPhysical*)((CPed*)CamTargetEntity)->m_pCurSurface;
+	if(ground && (ground->IsVehicle() || ground->IsObject()))
+		StandingOnMovingThing = true;
+	TargetCoors.z += m_fSyphonModeTargetZOffSet;
+
+	bool PlayerTooClose = false;
+	fAimingDist = (TheCamera.m_cvecAimingTargetCoors - TargetCoors).Magnitude2D();
+	if(fAimingDist < 6.5f){
+		fAimingDist = 6.5f;
+		PlayerTooClose = true;
+	}
+	TargetAlpha = CGeneral::GetATanOfXY(fAimingDist, TheCamera.m_cvecAimingTargetCoors.z - TargetCoors.z);
+	while (PS3_ANGLE_OK(TargetAlpha) && TargetAlpha >= PI) TargetAlpha -= 2*PI;
+	while (PS3_ANGLE_OK(TargetAlpha) && TargetAlpha < -PI) TargetAlpha += 2*PI;
+	while (PS3_ANGLE_OK(Alpha) && Alpha >= PI) Alpha -= 2*PI;
+	while (PS3_ANGLE_OK(Alpha) && Alpha < -PI) Alpha += 2*PI;
+
+	if(StandingOnMovingThing)
+		WellBufferMe(-TargetAlpha, &Alpha, &AlphaSpeed, 0.07f/2.0f, 0.015f/2.0f, true);
+	else
+		WellBufferMe(-TargetAlpha, &Alpha, &AlphaSpeed, 0.07f, 0.015f, true);
+
+	Source.z += GroundDist*Sin(Alpha+AlphaOffset) + GroundDist*0.2f;
+	if(Source.z < TargetCoors.z + HeightDown)
+		Source.z = TargetCoors.z + HeightDown;
+
+	if(!PlayerTooClose){
+		// something between the camera and the target: turn the camera
+		// towards the line to the target until it sees past it
+		CColPoint point;
+		CEntity *entity = nil;
+		CWorld::pIgnoreEntity = CamTargetEntity;
+		if(CWorld::ProcessLineOfSight(TheCamera.m_cvecAimingTargetCoors, Source, point, entity, true, false, false, true, false, false, true)){
+			CVector TestFront = TheCamera.m_cvecAimingTargetCoors - Source;
+			TestFront.Normalise();
+			CVector CamToPlayer = CameraTarget - Source;
+			CVector CamToCol = point.point - Source;
+			if(DotProduct(TestFront, CamToCol) > DotProduct(TestFront, CamToPlayer)){
+				// collision is beyond player
+				float ColDist = (TheCamera.m_cvecAimingTargetCoors - point.point).Magnitude();
+				CVector PlayerToTarget = TheCamera.m_cvecAimingTargetCoors - CameraTarget;
+				float PlayerToTargetDist = PlayerToTarget.Magnitude();
+				PlayerToTarget.Normalise();
+				CVector Center = TheCamera.m_cvecAimingTargetCoors - ColDist*PlayerToTarget;
+				float Radius = (point.point - Center).Magnitude();
+				if(CWorld::TestSphereAgainstWorld(Center, Radius, nil, true, false, false, true, false, true)){
+					CVector LineToCol = gaTempSphereColPoints[0].point - Center;
+					LineToCol -= DotProduct(LineToCol, PlayerToTarget)*PlayerToTarget;
+					float LineDist = LineToCol.Magnitude();
+					float NewBetaOffset = 0.0f;
+					if(LineDist > 0.0f && ColDist > 0.1f){
+						// scale offset at center to offset at player
+						float DistOffset = LineDist/ColDist * PlayerToTargetDist;
+						// turn into an angle
+						NewBetaOffset = 0.9f*Asin(Min(DistOffset/GroundDist, 1.0f));
+					}
+					if(NewBetaOffset < BetaOffset){
+						float Ratio = NewBetaOffset / BetaOffset;
+						BetaOffset = NewBetaOffset;
+						Beta = NewBeta + NewBetaOffset;
+						GroundDist *= Max(Ratio, 0.5f);
+						Source.x = TargetCoors.x + GroundDist*Cos(Beta);
+						Source.y = TargetCoors.y + GroundDist*Sin(Beta);
+						Source.z += (1.0f-Ratio)*0.5f;
+					}
+				}
+			}
+		}
+		CWorld::pIgnoreEntity = nil;
+	}
+
+	Front = TheCamera.m_cvecAimingTargetCoors - Source;
+	float TargetDistGround = Front.Magnitude2D();
+	Front.Normalise();
+	m_cvecTargetCoorsForFudgeInter = Source + TargetDistGround*Front;
+	m_cvecTargetCoorsForFudgeInter.z = TargetCoors.z;
+
+	CVector OrigSource = Source;
+	PS3_VCAvoidTheGeometry(CamTargetEntity, OrigSource, CameraTarget + CVector(0.0f, 0.0f, 0.75f), Source);
+	Source.z = OrigSource.z;
+
+	GetVectorsReadyForRW();
+}
+
+void
+CCam::Process_Syphon_Crim_In_Front_VC(const CVector &CameraTarget, float, float, float)
+{
+	FOV = DefaultFOV;
+
+	if(!CamTargetEntity->IsPed())
+		return;
+
+	CVector TargetCoors = CameraTarget;
+	CVector vDist;
+	float fDist, TargetDist;
+	float zOffset;
+	float AimingAngle;
+
+	TargetDist = TheCamera.m_fPedZoomValueSmooth * 0.5f + 4.0f;
+	vDist = Source - TargetCoors;
+	fDist = vDist.Magnitude2D();
+	zOffset = TargetDist - 2.65f;
+	if(zOffset < 0.0f)
+		zOffset = 0.0f;
+	if(zOffset == 0.0f || fDist == 0.0f)
+		Source = TargetCoors + CVector(1.0f, 1.0f, zOffset);
+	else
+		Source = TargetCoors + CVector(vDist.x/fDist*TargetDist, vDist.y/fDist*TargetDist, zOffset);
+
+	AimingAngle = CGeneral::GetATanOfXY(TheCamera.m_cvecAimingTargetCoors.x - TargetCoors.x, TheCamera.m_cvecAimingTargetCoors.y - TargetCoors.y);
+	while (PS3_ANGLE_OK(AimingAngle) && AimingAngle >= PI) AimingAngle -= 2*PI;
+	while (PS3_ANGLE_OK(AimingAngle) && AimingAngle < -PI) AimingAngle += 2*PI;
+
+	if(ResetStatics){
+		if(AimingAngle > 0.0f)
+			m_fPlayerInFrontSyphonAngleOffSet = -m_fPlayerInFrontSyphonAngleOffSet;
+		ResetStatics = false;
+	}
+
+	if(TheCamera.PlayerWeaponMode.Mode == MODE_SYPHON)
+		Beta = AimingAngle + m_fPlayerInFrontSyphonAngleOffSet;
+
+	Source.x = TargetCoors.x;
+	Source.y = TargetCoors.y;
+	Source.x += Cos(Beta) * TargetDist;
+	Source.y += Sin(Beta) * TargetDist;
+
+	TargetCoors = CameraTarget;
+	TargetCoors.z += m_fSyphonModeTargetZOffSet;
+	m_cvecTargetCoorsForFudgeInter = TargetCoors;
+
+	CVector OrigSource = Source;
+	PS3_VCAvoidTheGeometry(CamTargetEntity, OrigSource, TargetCoors, Source);
+
+	Front = TargetCoors - Source;
+	GetVectorsReadyForRW();
+}
+#endif
 
 void
 CCam::Process_BehindBoat(const CVector &CameraTarget, float TargetOrientation, float, float)

@@ -63,6 +63,10 @@ PlayStation button icons and the controller picture of the settings page).
   person (free camera) and first person (aiming, sniper, look around), 50% to
   200% (*Controller setup > Gamepad settings*). PlayStation buttons in the
   on-screen help.
+- **Aiming: III / Vice City** (*Controller setup > Gamepad settings*): with
+  Vice City, the camera when you lock on with a gun is Vice City's: it looks
+  at the target, follows its height and keeps it in the middle of the
+  screen, instead of III's over-the-shoulder camera that looks at the player.
 - **Map** in the pause menu, Vice City style: the game's radar tiles, every
   safehouse, Ammu-Nation, Pay 'n' Spray and bomb shop, waypoints with X.
 - **Collectibles on the map** (*Display > Hidden packages / Rampages / Unique

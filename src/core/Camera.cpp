@@ -32,6 +32,9 @@
 #include "GenericGameStorage.h"
 #include "MemoryCard.h"
 #include "Camera.h"
+#ifdef __PS3__
+extern int8 gPS3AimingVC;	// Cam.cpp
+#endif
 
 enum
 {
@@ -1312,7 +1315,11 @@ CCamera::CamControl(void)
 							if(ReqMode == CCam::MODE_SYPHON_CRIM_IN_FRONT)
 								fixedModeDist = 5.0f;
 							else
+#ifdef __PS3__
+								fixedModeDist = gPS3AimingVC ? 5.6f : 3.0f;	// Vice City's
+#else
 								fixedModeDist = 3.0f;
+#endif
 							ReqMode = CCam::MODE_SPECIAL_FIXED_FOR_SYPHON;
 						}
 						if(ReqMode == CCam::MODE_SPECIAL_FIXED_FOR_SYPHON){

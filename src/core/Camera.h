@@ -230,6 +230,11 @@ public:
 	void Process_Sniper(const CVector &CameraTarget, float, float, float);
 	void Process_Syphon(const CVector &CameraTarget, float, float, float);
 	void Process_Syphon_Crim_In_Front(const CVector &CameraTarget, float, float, float);
+#ifdef __PS3__
+	// Gamepad settings > Aiming: Vice City (reVC's lock-on cameras)
+	void Process_Syphon_VC(const CVector &CameraTarget, float, float, float);
+	void Process_Syphon_Crim_In_Front_VC(const CVector &CameraTarget, float, float, float);
+#endif
 	void Process_BehindBoat(const CVector &CameraTarget, float TargetOrientation, float, float);
 	void Process_Fight_Cam(const CVector &CameraTarget, float TargetOrientation, float, float);
 	void Process_FlyBy(const CVector&, float, float, float);

@@ -37,7 +37,8 @@ int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
 const char *texFilterNames[] = { "FEG_TF0", "FEG_TF1", "FEG_TF2", "FEG_TF3", "FEG_TF4", "FEG_TF5", "FEG_TF6" };
 const char *antialiasNames[] = { "FEM_OFF", "FEG_AAF" };
 // Gamepad settings: right stick sensitivity, third and first person (Cam.cpp)
-extern int8 gPS3Sens3rd, gPS3Sens1st;
+extern int8 gPS3Sens3rd, gPS3Sens1st, gPS3AimingVC;
+const char *aimingStyles[] = { "FEC_AI3", "FEC_AIV" };
 const char *sensLevels[] = { "FEC_SN0", "FEC_SN1", "FEC_SN2", "FEC_SN3", "FEC_SN4", "FEC_SN5", "FEC_SN6" };
 #ifdef __PS3__
 // FRAME RATE: 30 (the game's own, re3/PS2) or 60. ps3.cpp paces the flips
@@ -485,6 +486,7 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 		INVERT_PAD_SELECTOR
 #ifdef __PS3__	// the camera is the pad's (same re3.ini key as before)
 		FREE_CAM_TOGGLE
+		MENUACTION_CFO_SELECT, "FEC_AIM", { new CCFOSelect((int8*)&gPS3AimingVC, "Controller", "AimingVC", aimingStyles, 2, false) },
 		MENUACTION_CFO_SELECT, "FEC_S3P", { new CCFOSelect((int8*)&gPS3Sens3rd, "Controller", "Sensitivity3rdPerson", sensLevels, 7, false) },
 		MENUACTION_CFO_SELECT, "FEC_S1P", { new CCFOSelect((int8*)&gPS3Sens1st, "Controller", "Sensitivity1stPerson", sensLevels, 7, false) },
 #endif
