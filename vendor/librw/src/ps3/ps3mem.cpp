@@ -336,6 +336,17 @@ vramTight(void)
 	return used + margin > poolSize;
 }
 
+// Tighter still (less than ~18 MB left): the streaming throws out what is
+// behind the camera too, not only unused models
+bool
+vramCritical(void)
+{
+	if(poolBase == nil)
+		return false;
+	uint32 used = poolUsed - pendingBytes;
+	return used + poolSize/12 > poolSize;
+}
+
 // ---- tiled surfaces -----------------------------------------------------------
 //
 // The camera's colour and depth buffers in tile regions (as the PSL1GHT

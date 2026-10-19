@@ -206,6 +206,7 @@ void probeDecodeDXT(int32 dxt, uint8 *dst, int32 w, int32 h, const uint8 *src);
 // VRAM almost full (what is waiting to be freed counts as free):
 // the game's streaming throws out unused models while this is true
 bool vramTight(void);
+bool vramCritical(void);	// less than ~18 MB of VRAM left
 extern uint32 vramEvictions;
 // d3d8.cpp: an 8/4 bit palettized PC texture straight into VRAM. false: not
 // handled (the stream is untouched); true: read, *out is the raster or nil

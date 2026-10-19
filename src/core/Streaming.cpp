@@ -2792,10 +2792,16 @@ CStreaming::MakeSpaceFor(int32 size)
 #ifdef RW_PS3_RSX
 	// textures take ~4x their IMG size in VRAM: it runs out before the
 	// streaming memory does, so make room there too
-	while(rw::ps3::vramTight()){
-		if(!RemoveLeastUsedModel())
+	// nothing unused left and VRAM still tight: what is behind the camera
+	// goes, as the game does for its streaming memory (Ren's re3 log: a
+	// burst of 464 models took VRAM from 179 to 216 MB, every texture
+	// after that failed and the game crashed opening the map)
+	for(int ps3Round = 0; rw::ps3::vramTight() && ps3Round < 8; ps3Round++){
+		while(rw::ps3::vramTight() && RemoveLeastUsedModel())
+			rw::ps3::vramEvictions++;
+		if(!rw::ps3::vramCritical())
 			break;
-		rw::ps3::vramEvictions++;
+		DeleteRwObjectsBehindCamera(ms_memoryUsed > 2*1024*1024 ? ms_memoryUsed - 2*1024*1024 : 0);
 	}
 #endif
 	while(ms_memoryUsed >= ms_memoryAvailable - size)

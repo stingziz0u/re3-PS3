@@ -4388,8 +4388,16 @@ CMenuManager::Process(void)
 		// closed: the textures stay for the next pause (UnloadTextures
 		// still frees them on a restart / shutdown)
 		if (m_bSpritesLoaded) {
-			m_bSpritesLoaded = false;
-			gPS3MenuTexturesKept = true;
+#ifdef RW_PS3_RSX
+			// not when VRAM is short: then the world needs it more
+			if (rw::ps3::vramTight())
+				UnloadTextures();
+			else
+#endif
+			{
+				m_bSpritesLoaded = false;
+				gPS3MenuTexturesKept = true;
+			}
 		}
 #else
 		UnloadTextures();

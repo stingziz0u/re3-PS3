@@ -473,7 +473,11 @@ allocateTexels(Raster *raster, Ps3Raster *natras)
 	}
 	VramAlloc a;
 	if(!vramAlloc(&a, total, "texture")){
-		RWERROR((ERR_ALLOC, total));
+		// once VRAM is full this fails for every texture: a few lines,
+		// not the 4 MB of them that ended Ren's log before the crash
+		static int logged;
+		if(logged++ < 20)
+			RWERROR((ERR_ALLOC, total));
 		return false;
 	}
 	setAlloc(natras, a);
