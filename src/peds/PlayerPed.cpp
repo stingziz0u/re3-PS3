@@ -16,6 +16,9 @@
 #include "Pools.h"
 #include "Darkel.h"
 #include "CarCtrl.h"
+#ifdef __PS3__
+extern int8 gPS3AimingVC;	// Cam.cpp: Gamepad settings > Aiming
+#endif
 
 #define PAD_MOVE_TO_GAME_WORLD_MOVE 60.0f
 
@@ -1130,6 +1133,26 @@ CPlayerPed::ProcessPlayerWeapon(CPad *padUsed)
 				if (padUsed->ShiftTargetRightJustDown())
 					FindNextWeaponLockOnTarget(m_pPointGunAt, false);
 			}
+#ifdef __PS3__
+			// Aiming: Vice City. Its CPlayerPed::RotatePlayerToTrackTarget:
+			// the player turns at once to within 25 degrees of the target
+			// (III turns him at walking speed), so the lock-on camera, which
+			// stands off the line to the target, has him in place from the
+			// first frame
+			if(gPS3AimingVC && m_pPointGunAt && !weaponInfo->IsFlagSet(WEAPONFLAG_CANAIM_WITHARM)){
+				float angleToFace = CGeneral::GetRadianAngleBetweenPoints(
+					m_pPointGunAt->GetPosition().x, m_pPointGunAt->GetPosition().y,
+					GetPosition().x, GetPosition().y);
+				float angleDiff = CGeneral::LimitRadianAngle(m_fRotationCur - angleToFace);
+				if(angleDiff < -DEGTORAD(25.0f)){
+					m_fRotationCur -= angleDiff + DEGTORAD(25.0f);
+					m_fRotationDest -= angleDiff + DEGTORAD(25.0f);
+				}else if(angleDiff > DEGTORAD(25.0f)){
+					m_fRotationCur -= angleDiff - DEGTORAD(25.0f);
+					m_fRotationDest -= angleDiff - DEGTORAD(25.0f);
+				}
+			}
+#endif
 			TheCamera.SetNewPlayerWeaponMode(CCam::MODE_SYPHON, 0, 0);
 			TheCamera.UpdateAimingCoors(m_pPointGunAt->GetPosition());
 		}

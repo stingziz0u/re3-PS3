@@ -2086,6 +2086,12 @@ CCamera::StartTransition(int16 newMode)
 		   newMode == CCam::MODE_FOLLOWPED ||
 		   newMode == CCam::MODE_SYPHON ||
 		   newMode == CCam::MODE_SPECIAL_FIXED_FOR_SYPHON){
+#ifdef __PS3__
+			// III looks at the player while it changes between these: the
+			// camera swings around Claude before it settles on the target.
+			// Vice City goes straight from one view to the other.
+			if(!gPS3AimingVC)
+#endif
 			m_bItsOkToLookJustAtThePlayer = true;
 #ifdef __PS3__
 			ps3PedSwitch = true;
