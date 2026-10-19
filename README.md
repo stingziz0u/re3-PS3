@@ -60,7 +60,7 @@ PlayStation button icons and the controller picture of the settings page).
   *Options > Graphics > Frame rate*. Always in sync with the TV (no tearing).
 - PS2-style controls with lock-on aiming, four pad setups, button
   redefinition, inverted look, free camera, right stick sensitivity for third
-  person (free camera) and first person (aiming, sniper, look around), 50% to
+  person (free camera) and first person (aiming, sniper, look around), 20% to
   200% in steps of 5 (*Controller setup > Gamepad settings*). PlayStation buttons in the
   on-screen help.
 - **Aiming: III / Vice City** (*Controller setup > Gamepad settings*): with

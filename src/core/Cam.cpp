@@ -33,9 +33,9 @@ int16 DebugCamMode;
 // Gamepad settings: right stick sensitivity, third person (free cam on foot
 // and in a vehicle) and first person (aiming, sniper, rocket, look around).
 // An index, saved in re3.ini.
-// 50% to 200% in steps of 5 (index 0..30, 10 = 100%)
-int8 gPS3Sens3rd = 10, gPS3Sens1st = 10;
-static float PS3_SensMult(int8 i) { return (50 + 5*clamp((int)i, 0, 30)) / 100.0f; }
+// 20% to 200% in steps of 5, kept as percent / 5 (4..40, 20 = 100%)
+int8 gPS3Sens3rd = 20, gPS3Sens1st = 20;
+static float PS3_SensMult(int8 v) { return 5*clamp((int)v, 4, 40) / 100.0f; }
 #define PS3_SENS_3RD * PS3_SensMult(gPS3Sens3rd)
 // Gamepad settings > Aiming: 0 III, 1 Vice City (the lock-on cameras of
 // reVC: the camera looks at the target, not at the player; re3.ini)
