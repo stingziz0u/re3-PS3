@@ -2061,6 +2061,14 @@ CCamera::StartTransition(int16 newMode)
 	bool switchFromFight = false;
 	bool switchFromFixed = false;
 	bool switch1stPersonToVehicle = false;
+#ifdef __PS3__
+	// Aiming: Vice City. Its transitions between the on-foot cameras
+	// (follow ped <-> lock-on): 350 ms, half moving and half catching up,
+	// and 600 ms out of the fixed camera at a dead target. III takes 1350
+	// ms for all of them: the camera swung behind the player for seconds
+	// after locking on (Ren's video).
+	bool ps3PedSwitch = false, ps3FromFixedSyphon = false;
+#endif
 	float betaOffset, targetBeta, camBeta, deltaBeta;
 	int door;
 	bool vehicleVertical;
@@ -2077,8 +2085,12 @@ CCamera::StartTransition(int16 newMode)
 		if(newMode == CCam::MODE_SYPHON_CRIM_IN_FRONT ||
 		   newMode == CCam::MODE_FOLLOWPED ||
 		   newMode == CCam::MODE_SYPHON ||
-		   newMode == CCam::MODE_SPECIAL_FIXED_FOR_SYPHON)
+		   newMode == CCam::MODE_SPECIAL_FIXED_FOR_SYPHON){
 			m_bItsOkToLookJustAtThePlayer = true;
+#ifdef __PS3__
+			ps3PedSwitch = true;
+#endif
+		}
 		if(newMode == CCam::MODE_CAM_ON_A_STRING)
 			switchPedToCar = true;
 	}
@@ -2086,6 +2098,10 @@ CCamera::StartTransition(int16 newMode)
 
 	if(Cams[ActiveCam].Mode == CCam::MODE_SYPHON_CRIM_IN_FRONT && newMode == CCam::MODE_SYPHON)
 		switchSyphonMode = true;
+#ifdef __PS3__
+	if(Cams[ActiveCam].Mode == CCam::MODE_SPECIAL_FIXED_FOR_SYPHON)
+		ps3FromFixedSyphon = true;
+#endif
 	if(Cams[ActiveCam].Mode == CCam::MODE_FIGHT_CAM && newMode == CCam::MODE_FOLLOWPED)
 		switchFromFight = true;
 #ifndef PS2_CAM_TRANSITION
@@ -2363,6 +2379,12 @@ CCamera::StartTransition(int16 newMode)
 		m_fFractionInterToStopMoving = 0.2f;
 		m_fFractionInterToStopCatchUp = 0.8f;
 		m_uiTransitionDuration = 950;
+#ifdef __PS3__
+	}else if(gPS3AimingVC && ps3FromFixedSyphon){
+		m_fFractionInterToStopMoving = 0.0f;
+		m_fFractionInterToStopCatchUp = 1.0f;
+		m_uiTransitionDuration = 600;
+#endif
 	}else if(switchFromFixed){
 		m_fFractionInterToStopMoving = 0.05f;
 		m_fFractionInterToStopCatchUp = 0.95f;
@@ -2370,6 +2392,12 @@ CCamera::StartTransition(int16 newMode)
 		m_fFractionInterToStopMoving = 0.0f;
 		m_fFractionInterToStopCatchUp = 1.0f;
 		m_uiTransitionDuration = 1;
+#ifdef __PS3__
+	}else if(gPS3AimingVC && ps3PedSwitch){
+		m_fFractionInterToStopMoving = 0.5f;
+		m_fFractionInterToStopCatchUp = 0.5f;
+		m_uiTransitionDuration = 350;
+#endif
 	}else
 		m_uiTransitionDuration = 1350;	// already set above
 #else

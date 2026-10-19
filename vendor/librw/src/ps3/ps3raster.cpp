@@ -47,6 +47,7 @@ namespace ps3 {
 int32 nativeRasterOffset;
 bool dxt1As16 = true;
 bool dxtNative = true;
+uint32 loadHints;
 bool vmxMips = true;
 bool forceMipmaps = false;
 int32 texFilterMode = 0;
@@ -173,7 +174,7 @@ isPow2(int32 v)
 static void
 forceMipChain(Raster *raster, Ps3Raster *natras)
 {
-	if(!forceMipmaps || raster->type != Raster::TEXTURE)
+	if(!forceMipmaps || (loadHints & PS3_LOAD_NOMIPS) || raster->type != Raster::TEXTURE)
 		return;
 	if(!isPow2(raster->width) || !isPow2(raster->height) || (raster->width == 1 && raster->height == 1))
 		return;
@@ -834,6 +835,8 @@ rgbaToARGB(const uint8 *s)
 }
 
 // One RGBA8 level (bytes R G B A, w x h) into VRAM as A8R8G8B8
+static void encodeDXTLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *rgba, ConvCtx *cx);
+
 static void
 uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx *cx)
 {
@@ -841,6 +844,11 @@ uploadLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *rgba, ConvCtx
 	int32 h = levelDim(raster->originalHeight, level);
 	if(level >= natras->numLevels || natras->vram == nil)
 		return;
+	if(natras->vramFmt == PS3_VRAM_DXT){
+		// an RGBA texture kept as DXT
+		encodeDXTLevel(raster, natras, level, rgba, cx);
+		return;
+	}
 
 	if(natras->vramFmt != PS3_VRAM_ARGB8){
 		// DXT1 in 16 bits. Level 0 picks the format: A1R5G5B5 if it has a
@@ -2114,6 +2122,21 @@ uploadIndexedLevel(Raster *raster, Ps3Raster *natras, int32 level, const uint8 *
 	int32 h = levelDim(raster->originalHeight, level);
 	if(level >= natras->numLevels || natras->vram == nil)
 		return;
+	if(natras->vramFmt == PS3_VRAM_DXT){
+		// kept as DXT (VRAM full, or an HD radar tile): the texels in RGBA8,
+		// then compressed. Written as A8R8G8B8 here before, past the end
+		// of the smaller DXT storage: other textures' VRAM got trampled
+		// (the green blocks on Ren's map)
+		uint8 *rgba = convBuf(&mainCtx, &mainCtx.decoded, w*h*4);
+		if(rgba == nil)
+			return;
+		for(int32 k = 0; k < w*h; k++){
+			uint32 c = pal[idx[k]];
+			rgba[k*4+0] = c>>16; rgba[k*4+1] = c>>8; rgba[k*4+2] = c; rgba[k*4+3] = c>>24;
+		}
+		encodeDXTLevel(raster, natras, level, rgba, &mainCtx);
+		return;
+	}
 	if(natras->swizzled){
 		uint32 bytes = w*h*4;
 		uint8 *buf = getScratch(&mainCtx, bytes + (w+h)*4);
@@ -2288,6 +2311,12 @@ rasterCreateTexture(Raster *raster)
 	forceMipChain(raster, natras);
 
 #ifdef RW_PS3_RSX
+	// big RGBA textures the game asked to keep as DXT (HD radar tiles)
+	if((loadHints & PS3_LOAD_DXT) && dxtNative && isPow2(raster->width) && isPow2(raster->height) &&
+	   raster->width*raster->height >= 256*256){
+		natras->vramFmt = PS3_VRAM_DXT;
+		natras->vramDXT = natras->hasAlpha ? 5 : 1;
+	}
 	// VRAM full for an RGBA texture as it is (HD texture packs: a map of 64
 	// 512x512 tiles is 87 MB in RGBA8, Ren's re3 log): compressed into DXT
 	// it takes 4 (alpha, DXT5) or 8 times (DXT1) less, instead of drawing

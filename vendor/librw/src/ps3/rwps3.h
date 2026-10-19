@@ -167,6 +167,12 @@ void textureJobsSync(void);
 void textureJobsCollect(void);
 // Graphics menu (the game sets these every frame):
 extern bool forceMipmaps;	// textures loaded without mip levels get them (made on the CPU)
+// What the game says about the textures it is loading now (set around a
+// TXD load, back to 0 after it): 2D ones (the map's radar tiles) need no
+// made mip levels, and big RGBA ones are kept as DXT (an HD map is 64
+// 512x512 tiles: 64 MB in RGBA8, 8 in DXT1)
+enum { PS3_LOAD_NOMIPS = 1, PS3_LOAD_DXT = 2 };
+extern uint32 loadHints;
 extern int32 texFilterMode;	// 3D textures: 0 the game's filter, 1 bilinear, 2 trilinear
 extern int32 texAniso;		// 3D textures: anisotropic filtering, 1 (off), 2, 4, 8, 16
 extern bool fxaaOn;		// FXAA on the camera's picture before it is shown

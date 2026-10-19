@@ -16,6 +16,26 @@
 #if defined(__PS3__) && defined(RW_PS3_RSX)
 #include "src/ps3/rwps3.h"
 #endif
+
+#if defined(__PS3__) && defined(RW_PS3_RSX)
+#include "TxdStore.h"
+// The map's radar tiles ("radar00".."radar63"): 2D, so no made mip levels,
+// and HD ones (256x256 and more) kept as DXT in VRAM. An HD map pack of 64
+// 512x512 RGBA tiles took 64-87 MB and VRAM ran out with the map open
+// (white tiles, Ren's re3 log).
+static void
+PS3_TxdLoadHints(int32 slot)
+{
+	const char *n = CTxdStore::GetTxdName(slot);
+	bool radar = n && strncmp(n, "radar", 5) == 0 && n[5] >= '0' && n[5] <= '9';
+	rw::ps3::loadHints = radar ? rw::ps3::PS3_LOAD_NOMIPS | rw::ps3::PS3_LOAD_DXT : 0;
+}
+#define PS3_TXD_HINTS(slot) PS3_TxdLoadHints(slot)
+#define PS3_TXD_HINTS_END() (rw::ps3::loadHints = 0)
+#else
+#define PS3_TXD_HINTS(slot)
+#define PS3_TXD_HINTS_END()
+#endif
 #include "World.h"
 #include "Entity.h"
 #include "FileMgr.h"
@@ -610,12 +630,14 @@ CStreaming::ConvertBufferToObject(int8 *buf, int32 streamId)
 		}
 
 		PUSH_MEMID(MEMID_STREAM_TEXUTRES);
+		PS3_TXD_HINTS(streamId - STREAM_OFFSET_TXD);
 		if(ms_bLoadingBigModel || cdsize > 200){
 			success = CTxdStore::StartLoadTxd(streamId - STREAM_OFFSET_TXD, stream);
 			if(success)
 				ms_aInfoForModel[streamId].m_loadState = STREAMSTATE_STARTED;
 		}else
 		        success = CTxdStore::LoadTxd(streamId - STREAM_OFFSET_TXD, stream);
+		PS3_TXD_HINTS_END();
 		POP_MEMID();
 		UpdateMemoryUsed();
 
@@ -725,7 +747,9 @@ CStreaming::FinishLoadingLargeFile(int8 *buf, int32 streamId)
 		// Txd
 		CTxdStore::AddRef(streamId - STREAM_OFFSET_TXD);
 		PUSH_MEMID(MEMID_STREAM_TEXUTRES);
+		PS3_TXD_HINTS(streamId - STREAM_OFFSET_TXD);
 		success = CTxdStore::FinishLoadTxd(streamId - STREAM_OFFSET_TXD, stream);
+		PS3_TXD_HINTS_END();
 		POP_MEMID();
 		CTxdStore::RemoveRefWithoutDelete(streamId - STREAM_OFFSET_TXD);
 	}
