@@ -1263,6 +1263,91 @@ void cSampleManager::SetEffectsFadeVolume(uint8 nVolume) { m_nEffectsFadeVolume 
 void cSampleManager::SetMusicFadeVolume(uint8 nVolume) { m_nMusicFadeVolume = nVolume; }
 void cSampleManager::SetMonoMode(uint8 nMode) { m_nMonoMode = nMode; monoMode = nMode; }
 
+
+// ---- the sound bank kept an eye on ---------------------------------------------
+// Ren (re3, patch 66): after a while the skid sounds turned into static
+// until the game was restarted, and once a queued sound had an entity of
+// 3528. Static that stays is the sample's data (or its entry in the
+// sample table) overwritten. The bank is checksummed in 64 KB pieces when
+// it loads, and one piece a frame is checked again (all 10 MB in ~3 s);
+// the table is compared with a copy every 5 s. What changed is logged.
+#define PS3_BANKPIECE 65536
+static uint32 *ps3BankSums;
+static uint32 ps3BankPieces, ps3BankNext, ps3TableNext;
+static tSample *ps3TableCopy;
+static int ps3BankReports;
+
+static uint32
+PS3_BankSum(const uint8 *p, uint32 n)
+{
+	uint32 h = 2166136261u;
+	const uint32 *w = (const uint32*)p;
+	for(uint32 i = 0; i < n/4; i++)
+		h = (h ^ w[i]) * 16777619u;
+	return h;
+}
+
+static void
+PS3_BankSumsInit(const tSample *table)
+{
+	uint32 size = nSampleBankSize[SFX_BANK_0];
+	const uint8 *bank = (const uint8*)nSampleBankMemoryStartAddress[SFX_BANK_0];
+	uint32 pieces = (size + PS3_BANKPIECE - 1) / PS3_BANKPIECE;
+	if(ps3BankSums == nil || pieces != ps3BankPieces){
+		free(ps3BankSums);
+		ps3BankSums = (uint32*)malloc(pieces * 4);
+		ps3BankPieces = ps3BankSums ? pieces : 0;
+	}
+	for(uint32 i = 0; i < ps3BankPieces; i++){
+		uint32 n = Min(size - i*PS3_BANKPIECE, (uint32)PS3_BANKPIECE);
+		ps3BankSums[i] = PS3_BankSum(bank + i*PS3_BANKPIECE, n);
+	}
+	if(ps3TableCopy == nil)
+		ps3TableCopy = (tSample*)malloc(sizeof(tSample) * TOTAL_AUDIO_SAMPLES);
+	if(ps3TableCopy)
+		memcpy(ps3TableCopy, table, sizeof(tSample) * TOTAL_AUDIO_SAMPLES);
+}
+
+static void
+PS3_BankCheck(const tSample *table)
+{
+	if(ps3BankSums == nil || !bSampleBankLoaded[SFX_BANK_0] || ps3BankReports >= 12)
+		return;
+	uint32 size = nSampleBankSize[SFX_BANK_0];
+	const uint8 *bank = (const uint8*)nSampleBankMemoryStartAddress[SFX_BANK_0];
+	uint32 i = ps3BankNext++ % ps3BankPieces;
+	uint32 n = Min(size - i*PS3_BANKPIECE, (uint32)PS3_BANKPIECE);
+	uint32 sum = PS3_BankSum(bank + i*PS3_BANKPIECE, n);
+	if(sum != ps3BankSums[i]){
+		ps3BankSums[i] = sum;
+		uint32 at = i*PS3_BANKPIECE;
+		uint32 base = table[BankStartOffset[SFX_BANK_0]].nOffset;
+		int32 first = -1, last = -1;
+		for(int32 k = BankStartOffset[SFX_BANK_0]; k < SAMPLEBANK_MAX; k++){
+			uint32 off = table[k].nOffset - base;
+			if(off < at + n && off + table[k].nSize > at){
+				if(first < 0) first = k;
+				last = k;
+			}
+		}
+		ps3BankReports++;
+		PS3_Logf("[audio] the sound bank changed at %u-%u KB (sounds %d-%d): overwritten by something",
+		         at >> 10, (at + n) >> 10, first, last);
+	}
+	if(ps3TableCopy && ++ps3TableNext % 300 == 0 &&
+	   memcmp(ps3TableCopy, table, sizeof(tSample) * TOTAL_AUDIO_SAMPLES) != 0){
+		for(int32 k = 0; k < TOTAL_AUDIO_SAMPLES && ps3BankReports < 12; k++){
+			if(memcmp(&ps3TableCopy[k], &table[k], sizeof(tSample)) == 0)
+				continue;
+			ps3BankReports++;
+			PS3_Logf("[audio] the sample table changed: sound %d offset %u size %u freq %d (was %u %u %d)", k,
+			         table[k].nOffset, table[k].nSize, table[k].nFrequency,
+			         ps3TableCopy[k].nOffset, ps3TableCopy[k].nSize, ps3TableCopy[k].nFrequency);
+		}
+		memcpy(ps3TableCopy, table, sizeof(tSample) * TOTAL_AUDIO_SAMPLES);
+	}
+}
+
 bool
 cSampleManager::LoadSampleBank(uint8 nBank)
 {
@@ -1279,6 +1364,8 @@ cSampleManager::LoadSampleBank(uint8 nBank)
 	// sfx.raw is little-endian
 	LittleSwap16((void*)nSampleBankMemoryStartAddress[nBank], nSampleBankSize[nBank]/2);
 	bSampleBankLoaded[nBank] = true;
+	if(nBank == SFX_BANK_0)
+		PS3_BankSumsInit(m_aSamples);
 	return true;
 }
 
@@ -1495,6 +1582,11 @@ cSampleManager::SetChannelPan(uint32 nChannel, uint32 nPan)
 void
 cSampleManager::SetChannelFrequency(uint32 nChannel, uint32 nFreq)
 {
+	if(nFreq == 0 || nFreq > 200000){
+		static int logged;
+		if(logged++ < 8)
+			PS3_Logf("[audio] channel %u asked for %u Hz", nChannel, nFreq);
+	}
 	MixLock lock;
 	channels[nChannel].freq = nFreq;
 }
@@ -1727,6 +1819,7 @@ void
 cSampleManager::Service(void)
 {
 	// the streams have their own thread
+	PS3_BankCheck(m_aSamples);
 }
 
 bool

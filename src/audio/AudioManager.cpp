@@ -903,7 +903,10 @@ cAudioManager::ProcessActiveQueues()
 		if (sample.m_nEntityIndex < 0 || sample.m_nEntityIndex >= NUM_AUDIOENTITIES) {
 			static int ps3BadEnt;
 			if (ps3BadEnt++ < 8)
-				PS3_Logf("[audio] queued sound %d with entity %d: skipped", (int)sample.m_nSampleIndex, (int)sample.m_nEntityIndex);
+				PS3_Logf("[audio] queued sound %d with entity %d: skipped (bank %d, %u Hz, volume %d, counter %d, queue slot %d of %d)",
+				         (int)sample.m_nSampleIndex, (int)sample.m_nEntityIndex, (int)sample.m_nBankIndex, (uint32)sample.m_nFrequency,
+				         (int)sample.m_nVolume, (int)sample.m_nCounter, (int)m_abSampleQueueIndexTable[m_nActiveSampleQueue][i],
+				         (int)m_SampleRequestQueuesStatus[m_nActiveSampleQueue]);
 			continue;
 		}
 		PS3_CRUMB("audio: start sample|bank<<16|entity<<24", (int)sample.m_nSampleIndex | sample.m_nBankIndex << 16 | sample.m_nEntityIndex << 24);
