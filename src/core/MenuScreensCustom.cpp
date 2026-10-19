@@ -39,7 +39,35 @@ const char *antialiasNames[] = { "FEM_OFF", "FEG_AAF" };
 // Gamepad settings: right stick sensitivity, third and first person (Cam.cpp)
 extern int8 gPS3Sens3rd, gPS3Sens1st, gPS3AimingVC;
 const char *aimingStyles[] = { "FEC_AI3", "FEC_AIV" };
-const char *sensLevels[] = { "FEC_SN0", "FEC_SN1", "FEC_SN2", "FEC_SN3", "FEC_SN4", "FEC_SN5", "FEC_SN6" };
+// right stick sensitivity: 50% to 200% in steps of 5 (index 0..30, Cam.cpp)
+static wchar *
+SensDraw(int8 value)
+{
+	static wchar text[2][16];
+	static int which;
+	char str[16];
+	which ^= 1;
+	sprintf(str, "%d%%", 50 + 5*clamp((int)value, 0, 30));
+	AsciiToUnicode(str, text[which]);
+	return text[which];
+}
+static void
+SensPress(int8 *value, int8 action)
+{
+	if (action == FEOPTION_ACTION_LEFT && *value > 0)
+		(*value)--;
+	else if (action == FEOPTION_ACTION_RIGHT && *value < 30)
+		(*value)++;
+	else if (action == FEOPTION_ACTION_SELECT)
+		*value = 10;	// 100%
+	else
+		return;
+	FrontEndMenuManager.SaveSettings();
+}
+static wchar *Sens3rdDraw(bool *disabled, bool userHovering) { return SensDraw(gPS3Sens3rd); }
+static wchar *Sens1stDraw(bool *disabled, bool userHovering) { return SensDraw(gPS3Sens1st); }
+static void Sens3rdPress(int8 action) { SensPress(&gPS3Sens3rd, action); }
+static void Sens1stPress(int8 action) { SensPress(&gPS3Sens1st, action); }
 #ifdef __PS3__
 // FRAME RATE: 30 (the game's own, re3/PS2) or 60. ps3.cpp paces the flips
 int8 gPS3Fps60;
@@ -487,8 +515,8 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 #ifdef __PS3__	// the camera is the pad's (same re3.ini key as before)
 		FREE_CAM_TOGGLE
 		MENUACTION_CFO_SELECT, "FEC_AIM", { new CCFOSelect((int8*)&gPS3AimingVC, "Controller", "AimingVC", aimingStyles, 2, false) },
-		MENUACTION_CFO_SELECT, "FEC_S3P", { new CCFOSelect((int8*)&gPS3Sens3rd, "Controller", "Sensitivity3rdPerson", sensLevels, 7, false) },
-		MENUACTION_CFO_SELECT, "FEC_S1P", { new CCFOSelect((int8*)&gPS3Sens1st, "Controller", "Sensitivity1stPerson", sensLevels, 7, false) },
+		MENUACTION_CFO_DYNAMIC, "FEC_S3P", { new CCFODynamic((int8*)&gPS3Sens3rd, "Controller", "Sens3rdPercent", Sens3rdDraw, Sens3rdPress) },
+		MENUACTION_CFO_DYNAMIC, "FEC_S1P", { new CCFODynamic((int8*)&gPS3Sens1st, "Controller", "Sens1stPercent", Sens1stDraw, Sens1stPress) },
 #endif
 #ifndef __PS3__	// no vibration on the PS3 port
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS },
