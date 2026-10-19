@@ -2728,16 +2728,15 @@ int16 CPad::SniperModeLookUpDown(void)
 }
 
 #ifdef __PS3__
-// Gamepad settings > RIGHT STICK DEAD ZONE set to a percentage: it replaces
-// the game's thresholds for the camera (85 of 128, or 10/40 with the free
-// cam), and the stick's full deflection still turns it as fast as before
-// ((128 - 85) * 127/32). DEFAULT: the game's own code below.
+// Gamepad settings > STICK SETTINGS > RIGHT STICK DEAD ZONE: it replaces the
+// game's thresholds for the camera (85 of 128, two thirds of the way, or
+// 10/40 with the free cam): the camera starts turning there, and the
+// stick's full deflection still turns it as fast as before
+// ((128 - 85) * 127/32).
 static bool
 PS3_LookAround(int16 axis, bool lookBehind, int16 *out)
 {
 	float dz = PS3_PadDeadzone(true);
-	if (dz < 0.0f)
-		return false;
 	float d = dz * 128.0f;
 	float a = Min((float)Abs(axis), 128.0f);
 	if (a <= d || lookBehind && !TheCamera.Cams[0].Using3rdPersonMouseCam()) {

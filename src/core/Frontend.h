@@ -246,6 +246,9 @@ enum eMenuScreen
 #ifdef DETECT_JOYSTICK_MENU
 	MENUPAGE_DETECT_JOYSTICK,
 #endif
+#ifdef __PS3__
+	MENUPAGE_STICK_SETTINGS,	// Gamepad settings > STICK SETTINGS (sensitivity, dead zones)
+#endif
 
 #endif
 	MENUPAGE_UNK, // originally 58. Custom screens are inserted above, because last screen in CMenuScreens should always be empty to make CFO work

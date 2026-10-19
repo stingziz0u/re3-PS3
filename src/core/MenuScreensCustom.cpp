@@ -71,42 +71,39 @@ static wchar *Sens3rdDraw(bool *disabled, bool userHovering) { return SensDraw(g
 static wchar *Sens1stDraw(bool *disabled, bool userHovering) { return SensDraw(gPS3Sens1st); }
 static void Sens3rdPress(int8 action) { SensPress(&gPS3Sens3rd, action); }
 static void Sens1stPress(int8 action) { SensPress(&gPS3Sens1st, action); }
-// stick dead zones (ps3_pad.cpp), percent / 5: left 5% to 70%, X back to
-// 30% (the game's own); right DEFAULT (the game's own: the camera turns from
-// two thirds of the way) or 5% to 70%, X back to DEFAULT
+// stick dead zones (ps3_pad.cpp): 5% to 70% in steps of 5 (percent / 5), X
+// back to 30%, the game's own
 extern int8 gPS3DeadzoneL, gPS3DeadzoneR;
 static wchar *
-DeadzoneDraw(int8 value, bool canDefault)
+DeadzoneDraw(int8 value)
 {
 	static wchar text[2][16];
 	static int which;
 	char str[16];
-	if (canDefault && (value < 1 || value > 14))
-		return TheText.Get("FEG_TF0");	// DEFAULT
 	which ^= 1;
 	sprintf(str, "%d%%", 5*(value < 1 || value > 14 ? 6 : value));
 	AsciiToUnicode(str, text[which]);
 	return text[which];
 }
 static void
-DeadzonePress(int8 *value, int8 action, int8 lowest, int8 reset)
+DeadzonePress(int8 *value, int8 action)
 {
-	if (*value < lowest || *value > 14)
-		*value = reset;
-	if (action == FEOPTION_ACTION_LEFT && *value > lowest)
+	if (*value < 1 || *value > 14)
+		*value = 6;
+	if (action == FEOPTION_ACTION_LEFT && *value > 1)
 		(*value)--;
 	else if (action == FEOPTION_ACTION_RIGHT && *value < 14)
 		(*value)++;
 	else if (action == FEOPTION_ACTION_SELECT)
-		*value = reset;
+		*value = 6;	// 30%
 	else
 		return;
 	FrontEndMenuManager.SaveSettings();
 }
-static wchar *DeadzoneLDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneL, false); }
-static wchar *DeadzoneRDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneR, true); }
-static void DeadzoneLPress(int8 action) { DeadzonePress(&gPS3DeadzoneL, action, 1, 6); }	// 30%
-static void DeadzoneRPress(int8 action) { DeadzonePress(&gPS3DeadzoneR, action, 0, 0); }	// DEFAULT
+static wchar *DeadzoneLDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneL); }
+static wchar *DeadzoneRDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneR); }
+static void DeadzoneLPress(int8 action) { DeadzonePress(&gPS3DeadzoneL, action); }
+static void DeadzoneRPress(int8 action) { DeadzonePress(&gPS3DeadzoneR, action); }
 #ifdef __PS3__
 // FRAME RATE: 30 (the game's own, re3/PS2) or 60. ps3.cpp paces the flips
 int8 gPS3Fps60;
@@ -554,10 +551,7 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 #ifdef __PS3__	// the camera is the pad's (same re3.ini key as before)
 		FREE_CAM_TOGGLE
 		MENUACTION_CFO_SELECT, "FEC_AIM", { new CCFOSelect((int8*)&gPS3AimingVC, "Controller", "AimingVC", aimingStyles, 2, false) },
-		MENUACTION_CFO_DYNAMIC, "FEC_S3P", { new CCFODynamic((int8*)&gPS3Sens3rd, "Controller", "Sens3rdPct5", Sens3rdDraw, Sens3rdPress) },
-		MENUACTION_CFO_DYNAMIC, "FEC_S1P", { new CCFODynamic((int8*)&gPS3Sens1st, "Controller", "Sens1stPct5", Sens1stDraw, Sens1stPress) },
-		MENUACTION_CFO_DYNAMIC, "FEC_DZL", { new CCFODynamic((int8*)&gPS3DeadzoneL, "Controller", "DeadzoneLPct5", DeadzoneLDraw, DeadzoneLPress) },
-		MENUACTION_CFO_DYNAMIC, "FEC_DZR", { new CCFODynamic((int8*)&gPS3DeadzoneR, "Controller", "DeadzoneRight", DeadzoneRDraw, DeadzoneRPress) },
+		MENUACTION_CHANGEMENU,		"FEC_STK", { nil, SAVESLOT_NONE, MENUPAGE_STICK_SETTINGS },
 #endif
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS },
 		SELECT_CONTROLLER_TYPE
@@ -568,13 +562,13 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 	{ "FET_AUD", MENUPAGE_OPTIONS, MENUPAGE_OPTIONS, nil, nil,
 		MENUACTION_MUSICVOLUME,		"FEA_MUS", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 		MENUACTION_SFXVOLUME,		"FEA_SFX", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
+#ifdef __PS3__
+		MENUACTION_MP3VOLUMEBOOST,	"FEA_MPB", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },	// under SFX, as in Vice City
+#endif
 		MENUACTION_AUDIOHW,			"FEA_3DH", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 		MENUACTION_SPEAKERCONF,		"FEA_SPK", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 		MENUACTION_DYNAMICACOUSTIC,	"FET_DAM", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 		MENUACTION_RADIO,			"FEA_RSS", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
-#ifdef __PS3__
-		MENUACTION_MP3VOLUMEBOOST,	"FEA_MPB", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
-#endif
 		MENUACTION_RESTOREDEF,		"FET_DEF", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 		MENUACTION_CHANGEMENU,		"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE },
 	},
@@ -1064,6 +1058,19 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 
 		MENUACTION_LABEL,	"FEC_JPR", { nil, SAVESLOT_NONE, MENUPAGE_NONE },
 		MENUACTION_CFO_DYNAMIC,	"FEC_JDE", { new CCFODynamic(nil, nil, nil, DetectJoystickDraw, nil) },
+		MENUACTION_CHANGEMENU,	"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE },
+	},
+#endif
+
+#ifdef __PS3__
+	// MENUPAGE_STICK_SETTINGS: out of Gamepad settings, where the rows ran
+	// into the controller picture
+	{ "FET_STK", MENUPAGE_CONTROLLER_SETTINGS, MENUPAGE_CONTROLLER_SETTINGS,
+		new CCustomScreenLayout({MENUSPRITE_MAINMENU, 50, 0, 20, FONT_HEADING, FESCREEN_LEFT_ALIGN, true, MEDIUMTEXT_X_SCALE, MEDIUMTEXT_Y_SCALE}), nil,
+		MENUACTION_CFO_DYNAMIC, "FEC_S3P", { new CCFODynamic((int8*)&gPS3Sens3rd, "Controller", "Sens3rdPct5", Sens3rdDraw, Sens3rdPress) },
+		MENUACTION_CFO_DYNAMIC, "FEC_S1P", { new CCFODynamic((int8*)&gPS3Sens1st, "Controller", "Sens1stPct5", Sens1stDraw, Sens1stPress) },
+		MENUACTION_CFO_DYNAMIC, "FEC_DZL", { new CCFODynamic((int8*)&gPS3DeadzoneL, "Controller", "DeadzoneLPct5", DeadzoneLDraw, DeadzoneLPress) },
+		MENUACTION_CFO_DYNAMIC, "FEC_DZR", { new CCFODynamic((int8*)&gPS3DeadzoneR, "Controller", "DeadzoneRight", DeadzoneRDraw, DeadzoneRPress) },
 		MENUACTION_CHANGEMENU,	"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE },
 	},
 #endif
