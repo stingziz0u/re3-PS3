@@ -3325,7 +3325,11 @@ CCam::Process_Syphon_VC(const CVector &CameraTarget, float, float, float)
 		Beta = CGeneral::GetATanOfXY(Source.x - TargetCoors.x, Source.y - TargetCoors.y);
 		ResetStatics = false;
 	}
-	BetaOffset = VC_SYPHON_DEGREE_OFFSET;
+	// Vice City negates it (NegateBetaOffset, always true): +30 degrees,
+	// the camera on the side that leaves the player on the left of the
+	// screen. Without it Claude stood on the right, the other way round
+	// from Tommy (Ren); the collision turn below also expects it positive.
+	BetaOffset = -VC_SYPHON_DEGREE_OFFSET;
 	Beta = NewBeta + BetaOffset;
 	Source = TargetCoors;
 	Source.x += GroundDist*Cos(Beta);
