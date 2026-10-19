@@ -74,6 +74,18 @@ CdStreamRead(int32 channel, void *buffer, uint32 offset, uint32 size)
 
 	int32 img = _GET_INDEX(offset);
 	CdChannel *ch = &gChannels[channel];
+	if (img == PS3_MODS_IMAGE) {
+		// USRDIR/mods files that replace .img entries (ps3_mods.cpp)
+		gPS3CdReads++;
+		if (PS3_ModsRead(_GET_OFFSET(offset), buffer, size)) {
+			gPS3CdBytes += (uint64)size * CDSTREAM_SECTOR_SIZE;
+			ch->nStatus = STREAM_NONE;
+		} else {
+			gPS3CdErrors++;
+			ch->nStatus = STREAM_ERROR;
+		}
+		return STREAM_SUCCESS;
+	}
 	if (img >= MAX_CDIMAGES || !gImgOpen[img]) {
 		ch->nStatus = STREAM_ERROR;
 		gPS3CdErrors++;
@@ -153,6 +165,11 @@ CdStreamAddImage(char const *path)
 	s32 fd;
 
 	ASSERT(gNumImages < MAX_CDIMAGES);
+	if (gNumImages >= PS3_MODS_IMAGE) {
+		// the last index is USRDIR/mods' (ps3_mods.cpp)
+		PS3_Logf("[cd] image %s not added: %d images at most", path, PS3_MODS_IMAGE);
+		return false;
+	}
 	if (!PS3_ResolvePath(path, abs, sizeof(abs)) ||
 	    sysLv2FsOpen(abs, SYS_O_RDONLY, &fd, 0, NULL, 0) != 0) {
 		PS3_Logf("[cd] can't open image %s (%s)", path, abs);

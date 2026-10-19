@@ -565,13 +565,15 @@ CapturePad(RwInt32 padID)
 		if (CPad::m_bMapPadOneToPadTwo)
 			bs.padID = 1;
 		CPad *pad = CPad::GetPad(bs.padID);
-		if (Abs(leftStickPos.x) > 0.3f)
+		// dead zones: Gamepad settings (0.3 = the game's own)
+		float deadL = PS3_PadDeadzone(false), deadR = PS3_PadDeadzone(true);
+		if (Abs(leftStickPos.x) > deadL)
 			pad->PCTempJoyState.LeftStickX = (int32)(leftStickPos.x * 128.0f);
-		if (Abs(leftStickPos.y) > 0.3f)
+		if (Abs(leftStickPos.y) > deadL)
 			pad->PCTempJoyState.LeftStickY = (int32)(leftStickPos.y * 128.0f);
-		if (Abs(rightStickPos.x) > 0.3f)
+		if (Abs(rightStickPos.x) > deadR)
 			pad->PCTempJoyState.RightStickX = (int32)(rightStickPos.x * 128.0f);
-		if (Abs(rightStickPos.y) > 0.3f)
+		if (Abs(rightStickPos.y) > deadR)
 			pad->PCTempJoyState.RightStickY = (int32)(rightStickPos.y * 128.0f);
 	}
 }

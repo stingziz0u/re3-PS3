@@ -43,8 +43,13 @@ char *PS3_getcwd(char *buf, int size);
 int PS3_IsDir(const char *abspath);
 int PS3_FileSize(const char *abspath, long long *size);
 
+// ps3_mods.cpp (USRDIR/mods, like a PC mod loader)
+const char *PS3_ModsOpenPath(const char *abspath);	// a loose file opened for reading: the mod file, or 0
+
 // ps3_pad.cpp
 unsigned PS3_PadButtons(void);	// raw DS3 buttons, bit n = GLFW_GAMEPAD_BUTTON_n
+void PS3_PadRumble(int large);	// large motor 0..255 (0 = still)
+float PS3_PadDeadzone(bool right);	// stick dead zone, 0.05..0.5 (Gamepad settings)
 
 // ps3.cpp
 unsigned PS3_FreeUserMemMB(void);
@@ -60,6 +65,11 @@ void PS3_LogMemTag(const char *tag);	// heap, free memory, textures, streaming
 void PS3_AutotestFrame(void);		// CPad::UpdatePads, every frame
 int  PS3_AutotestWantsLoad(void);	// main loop, between frames
 void PS3_AutotestLoaded(void);		// after a load it asked for
+
+// ps3_mods.cpp: .img entries replaced by mods/ files live in a virtual image
+#define PS3_MODS_IMAGE (MAX_CDIMAGES - 1)
+bool PS3_ModsImgEntry(const char *name, unsigned int *offset, unsigned int *size);	// .dir entry (with extension)
+bool PS3_ModsRead(unsigned int sector, void *buffer, unsigned int sectors);	// CdStreamRead on PS3_MODS_IMAGE
 
 // ps3_carspawn.cpp (L3 + R3)
 void PS3_CarSpawnerPad(void);		// CPad::UpdatePads, after pad 0

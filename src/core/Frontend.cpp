@@ -5210,6 +5210,9 @@ CMenuManager::ProcessButtonPresses(void)
 						m_PrefsStereoMono = 0;
 						m_PrefsRadioStation = HEAD_RADIO;
 						DMAudio.SetMusicMasterVolume(102);
+#ifdef __PS3__
+						{ extern int8 gPS3Mp3Boost; gPS3Mp3Boost = 0; }
+#endif
 						DMAudio.SetEffectsMasterVolume(m_PrefsSfxVolume);
 						DMAudio.SetRadioInCar(m_PrefsRadioStation);
 						DMAudio.PlayFrontEndTrack(m_PrefsRadioStation, 1);

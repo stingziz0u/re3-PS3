@@ -61,12 +61,15 @@ PlayStation button icons and the controller picture of the settings page).
 - PS2-style controls with lock-on aiming, four pad setups, button
   redefinition, inverted look, free camera, right stick sensitivity for third
   person (free camera) and first person (aiming, sniper, look around), 20% to
-  200% in steps of 5 (*Controller setup > Gamepad settings*). PlayStation buttons in the
+  200% in steps of 5, stick dead zones 5% to 50% and vibration
+  (*Controller setup > Gamepad settings*). PlayStation buttons in the
   on-screen help.
 - **Aiming: III / Vice City** (*Controller setup > Gamepad settings*): with
   Vice City, the camera when you lock on with a gun is Vice City's: it looks
   at the target, follows its height and keeps it in the middle of the
   screen, instead of III's over-the-shoulder camera that looks at the player.
+  It also picks targets as Vice City does: only what is in front of the
+  player, mission characters and whoever is after him first.
 - **Map** in the pause menu, Vice City style: the game's radar tiles, every
   safehouse, Ammu-Nation, Pay 'n' Spray and bomb shop, waypoints with X.
 - **Collectibles on the map** (*Display > Hidden packages / Rampages / Unique
@@ -81,7 +84,8 @@ PlayStation button icons and the controller picture of the settings page).
   L1/R1 by 10 (hold to scroll), X puts you in it, O closes. Boats go on the
   water in front of you (up to 30 m). Trains, helicopters, planes and the RC
   Bandit aren't in the list.
-- **MP3 player radio**: put `.mp3` files in `USRDIR/mp3`.
+- **MP3 player radio**: put `.mp3` files in `USRDIR/mp3`. *Audio > MP3 volume
+  boost* raises it up to twice the music volume, as in Vice City.
 - **Skins**: put `.bmp` skins in `USRDIR/skins`, choose them in *Player setup*.
 - DXT textures (most of the PC game's) stay compressed in video memory and
   the RSX reads them as they are: 4 times less VRAM than converted, and
@@ -144,13 +148,24 @@ original):
 
 ## Mods
 
+**`USRDIR/mods`**, like a mod loader on the PC: a file put there (in any
+subfolder, any letter case) is used instead of the game's file with the same
+name, whether that one is loose (`hud.txd`, `handling.cfg`, `main.scm`...)
+or inside `gta3.img` (`weapons.txd`, `infernus.dff`...). Nothing has to be
+rebuilt: take a mod's files out of its folder or delete them and the
+original ones are back. If two files have the same name, the one whose path
+comes first in alphabetical order is used. The log lists every file
+replaced (`[mods]` lines). Files in `USRDIR` itself (`re3.ini`, settings,
+logs), `userfiles` and `mp3` are never replaced. `.img` files inside `mods`
+aren't read: take the files out of them with an IMG tool.
+
 Anything made for the PC version of GTA III as data files works:
 
-- TXD textures (loose in `models`/`txd`, or inside `gta3.img` with an IMG
-  tool on the PC, then copy `gta3.img` and `gta3.dir`): HD loading screens,
-  HUD, fonts, vehicles, peds, buildings. All PC formats are read
-  (palettized, 16/32 bit, DXT1/3/5).
-- DFF models in GTA III PC format, inside `gta3.img`.
+- TXD textures (in `mods`, loose in `models`/`txd`, or inside `gta3.img`
+  with an IMG tool on the PC, then copy `gta3.img` and `gta3.dir`): HD
+  loading screens, HUD, fonts, vehicles, peds, buildings. All PC formats are
+  read (palettized, 16/32 bit, DXT1/3/5).
+- DFF models in GTA III PC format, in `mods` or inside `gta3.img`.
 - Data files (`handling.cfg`, `carcols.dat`, `timecyc.dat`, `gta3.dat`...)
   and a modified `main.scm`.
 

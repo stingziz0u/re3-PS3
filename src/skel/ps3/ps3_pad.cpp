@@ -16,6 +16,7 @@
 #include "crossplatform.h"
 
 #include <io/pad.h>
+#include <sys/systime.h>
 
 #include "ps3_platform.h"
 
@@ -31,6 +32,19 @@ static int nopad;
 
 static unsigned char buttons[15];
 static float axes[6];
+
+// Gamepad settings: stick dead zones, percent / 5 (1..10 = 5%..50%; 6 = 30%,
+// the 0.3 the game always had). An axis under it reads as centred
+int8 gPS3DeadzoneL = 6, gPS3DeadzoneR = 6;
+
+float
+PS3_PadDeadzone(bool right)
+{
+	int v = right ? gPS3DeadzoneR : gPS3DeadzoneL;
+	if (v < 1 || v > 10)
+		v = 6;
+	return v * 0.05f;
+}
 
 static void
 ReleaseAll(void)
@@ -65,6 +79,7 @@ PS3_PadShutdown(void)
 {
 	if (!initialized)
 		return;
+	PS3_PadRumble(0);
 	ioPadEnd();
 	initialized = 0;
 	connected = 0;
@@ -303,4 +318,35 @@ glfwGetGamepadState(int jid, GLFWgamepadstate *state)
 	memcpy(state->buttons, buttons, sizeof(state->buttons));
 	memcpy(state->axes, axes, sizeof(state->axes));
 	return 1;
+}
+
+// ---- vibration ----------------------------------------------------------------
+
+// The PS2 game's scePadSetActDirect: small motor off, large motor = the shake
+// frequency (CPad::ShakeFreq, 0 = still). Sent when it changes, and again
+// every half second while it runs (a pad plugged in meanwhile gets it too)
+void
+PS3_PadRumble(int large)
+{
+	static int last = -1, lastPort = -1;
+	static u64 lastSend;
+	if (large < 0) large = 0;
+	if (large > 255) large = 255;
+	if (!initialized || !connected || port < 0) {
+		last = -1;
+		return;
+	}
+	u64 now = sysGetSystemTime() / 1000;
+	if (large == last && port == lastPort && (large == 0 || now - lastSend < 500))
+		return;
+	padActParam act;
+	memset(&act, 0, sizeof(act));
+	act.small_motor = 0;
+	act.large_motor = (u8)large;
+	ioPadSetActDirect(port, &act);
+	if ((large != 0) != (last > 0))
+		PS3_Logf("[pad] vibration %s (%d) on port %d", large ? "on" : "off", large, port);
+	last = large;
+	lastPort = port;
+	lastSend = now;
 }

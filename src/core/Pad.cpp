@@ -1144,6 +1144,27 @@ void CPad::UpdatePads(void)
 #if defined(__PS3__) && PS3_STAGE != 1
 	PS3_AutotestFrame();	// the automatic test (USRDIR/autotest.txt), if any
 	PS3_CarSpawnerPad();	// L3 + R3
+	{
+		// vibration (Gamepad settings): what the PS2 game sent to the
+		// DualShock 2 every frame, on the DS3's large motor
+		// Real time: the game's clock stands still in the pause menu, where
+		// only the menu's own test shake (turning it on) may run.
+		extern uint32 TimeToStopPadShaking;
+		static uint32 last;
+		uint32 now = (uint32)CTimer::GetTimeInMillisecondsPauseMode();
+		int32 dt = last ? Min((int32)(now - last), 100) : 0;
+		last = now;
+		CPad *pad0 = GetPad(0);
+		if (FrontEndMenuManager.m_bMenuActive && TimeToStopPadShaking == 0)
+			pad0->ShakeDur = 0;
+		if (pad0->ShakeDur > 0)
+			pad0->ShakeDur = Max(pad0->ShakeDur - dt, 0);
+		if (pad0->ShakeDur <= 0) {
+			pad0->ShakeDur = 0;
+			pad0->ShakeFreq = 0;
+		}
+		PS3_PadRumble(pad0->ShakeFreq);
+	}
 #endif
 
 #ifndef MASTER

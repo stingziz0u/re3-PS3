@@ -16,6 +16,9 @@
 #if defined(__PS3__) && defined(RW_PS3_RSX)
 #include "src/ps3/rwps3.h"
 #endif
+#ifdef __PS3__
+#include "ps3_platform.h"	// USRDIR/mods
+#endif
 
 #if defined(__PS3__) && defined(RW_PS3_RSX)
 #include "TxdStore.h"
@@ -464,6 +467,17 @@ CStreaming::LoadCdDirectory(const char *dirname, int n)
 	while(CFileMgr::Read(fd, (char*)&direntry, sizeof(direntry))){
 		direntry.offset = LittleU32(direntry.offset);
 		direntry.size = LittleU32(direntry.size);
+#ifdef __PS3__
+		// USRDIR/mods: a file of the same name replaces the entry. It sits in
+		// its own image, so it is never read together with its neighbours
+		int imgSelector = n<<24;
+		direntry.name[23] = '\0';
+		if(PS3_ModsImgEntry(direntry.name, &direntry.offset, &direntry.size)){
+			imgSelector = PS3_MODS_IMAGE<<24;
+			lastID = -1;
+		}
+		bool ps3Mod = imgSelector != n<<24;
+#endif
 		dot = strchr(direntry.name, '.');
 		assert(dot);
 		if(dot) *dot = '\0';
@@ -481,11 +495,18 @@ CStreaming::LoadCdDirectory(const char *dirname, int n)
 					if(lastID != -1)
 						ms_aInfoForModel[lastID].m_nextID = modelId;
 					lastID = modelId;
+#ifdef __PS3__
+					if(ps3Mod) lastID = -1;
+#endif
 				}
 			}else{
 #ifdef FIX_BUGS
 				// remember which cdimage this came from
+#ifdef __PS3__
+				ms_pExtraObjectsDir->AddItem(direntry, ps3Mod ? PS3_MODS_IMAGE : n);
+#else
 				ms_pExtraObjectsDir->AddItem(direntry, n);
+#endif
 #else
 				ms_pExtraObjectsDir->AddItem(direntry);
 #endif
@@ -504,6 +525,9 @@ CStreaming::LoadCdDirectory(const char *dirname, int n)
 				if(lastID != -1)
 					ms_aInfoForModel[lastID].m_nextID = txdId + STREAM_OFFSET_TXD;
 				lastID = txdId + STREAM_OFFSET_TXD;
+#ifdef __PS3__
+				if(ps3Mod) lastID = -1;
+#endif
 			}
 		}else
 			lastID = -1;

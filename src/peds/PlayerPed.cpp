@@ -18,6 +18,27 @@
 #include "CarCtrl.h"
 #ifdef __PS3__
 extern int8 gPS3AimingVC;	// Cam.cpp: Gamepad settings > Aiming
+
+// Aiming: Vice City also picks its targets as Vice City does (its
+// FindWeaponLockOnTarget / FindNextWeaponLockOnTarget / EvaluateTarget):
+//  - only what the player can aim at from where he faces: within 90 degrees
+//    of him, and not steeper than 45 degrees up or down, unless the weapon
+//    aims with the arm (CPlayerPed::CanIKReachThisTarget)
+//  - mission characters and peds after him first: +30 instead of III's +5
+//    (Vice City's IsThisPedAnAimingPriority; every script char is not a
+//    "player friend" there unless the script says so; III has no such flag)
+//  - targettable objects count as priority, broken ones are skipped
+static bool
+PS3_VCCanReach(CPlayerPed *p, const CVector &target)
+{
+	bool arm = CWeaponInfo::GetWeaponInfo(p->GetWeapon()->m_eWeaponType)->IsFlagSet(WEAPONFLAG_CANAIM_WITHARM);
+	if(arm)
+		return true;
+	float angleToFace = CGeneral::GetRadianAngleBetweenPoints(target.x, target.y, p->GetPosition().x, p->GetPosition().y);
+	float angleDiff = CGeneral::LimitRadianAngle(angleToFace - p->m_fRotationCur);
+	return Abs(angleDiff) <= HALFPI &&
+		Abs(target.z - p->GetPosition().z) <= (target - p->GetPosition()).Magnitude2D();
+}
 #endif
 
 #define PAD_MOVE_TO_GAME_WORLD_MOVE 60.0f
@@ -836,7 +857,11 @@ CPlayerPed::EvaluateTarget(CEntity *candidate, CEntity **targetPtr, float *lastC
 
 			float closeness = -dist - 5.0f * Abs(angleBetweenUs);
 			if (priority) {
+#ifdef __PS3__
+				closeness += gPS3AimingVC ? 30.0f : 5.0f;
+#else
 				closeness += 5.0f;
+#endif
 			}
 
 			if (closeness > *lastCloseness) {
@@ -863,7 +888,11 @@ CPlayerPed::FindNextWeaponLockOnTarget(CEntity *previousTarget, bool lookToLeft)
 		if (pedToCheck) {
 			if (pedToCheck != FindPlayerPed() && pedToCheck != previousTarget) {
 				if (!pedToCheck->DyingOrDead() && !pedToCheck->bInVehicle
-					&& pedToCheck->m_leader != FindPlayerPed() && OurPedCanSeeThisOne(pedToCheck)) {
+					&& pedToCheck->m_leader != FindPlayerPed() && OurPedCanSeeThisOne(pedToCheck)
+#ifdef __PS3__
+					&& (!gPS3AimingVC || PS3_VCCanReach(this, pedToCheck->GetPosition()))
+#endif
+					) {
 
 					EvaluateNeighbouringTarget(pedToCheck, &nextTarget, &lastCloseness,
 						weaponRange, referenceBeta, lookToLeft);
@@ -873,6 +902,10 @@ CPlayerPed::FindNextWeaponLockOnTarget(CEntity *previousTarget, bool lookToLeft)
 	}
 	for (int i = 0; i < ARRAY_SIZE(m_nTargettableObjects); i++) {
 		CObject *obj = CPools::GetObjectPool()->GetAt(m_nTargettableObjects[i]);
+#ifdef __PS3__
+		if (obj && gPS3AimingVC && (obj->bHasBeenDamaged || !PS3_VCCanReach(this, obj->GetPosition())))
+			continue;
+#endif
 		if (obj)
 			EvaluateNeighbouringTarget(obj, &nextTarget, &lastCloseness, weaponRange, referenceBeta, lookToLeft);
 	}
@@ -908,16 +941,32 @@ CPlayerPed::FindWeaponLockOnTarget(void)
 		if (pedToCheck) {
 			if (pedToCheck != FindPlayerPed()) {
 				if (!pedToCheck->DyingOrDead() && !pedToCheck->bInVehicle
-					&& pedToCheck->m_leader != FindPlayerPed() && OurPedCanSeeThisOne(pedToCheck)) {
+					&& pedToCheck->m_leader != FindPlayerPed() && OurPedCanSeeThisOne(pedToCheck)
+#ifdef __PS3__
+					&& (!gPS3AimingVC || PS3_VCCanReach(this, pedToCheck->GetPosition()))
+#endif
+					) {
 
+					bool priority = IsThisPedAttackingPlayer(pedToCheck);
+#ifdef __PS3__
+					if (gPS3AimingVC && pedToCheck->CharCreatedBy == MISSION_CHAR)
+						priority = true;
+#endif
 					EvaluateTarget(pedToCheck, &nextTarget, &lastCloseness,
-						weaponRange, referenceBeta, IsThisPedAttackingPlayer(pedToCheck));
+						weaponRange, referenceBeta, priority);
 				}
 			}
 		}
 	}
 	for (int i = 0; i < ARRAY_SIZE(m_nTargettableObjects); i++) {
 		CObject *obj = CPools::GetObjectPool()->GetAt(m_nTargettableObjects[i]);
+#ifdef __PS3__
+		if (obj && gPS3AimingVC) {
+			if (!obj->bHasBeenDamaged && PS3_VCCanReach(this, obj->GetPosition()))
+				EvaluateTarget(obj, &nextTarget, &lastCloseness, weaponRange, referenceBeta, true);
+			continue;
+		}
+#endif
 		if (obj)
 			EvaluateTarget(obj, &nextTarget, &lastCloseness, weaponRange, referenceBeta, false);
 	}

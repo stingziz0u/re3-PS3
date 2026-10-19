@@ -26,6 +26,10 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEC_AIV", "VICE CITY" },	// re3-PS3's own
 	{ "FEC_S3P", "3RD PERSON SENSITIVITY" },	// re3-PS3's own
 	{ "FEC_S1P", "1ST PERSON SENSITIVITY" },	// re3-PS3's own
+	{ "FEC_VIB", "VIBRATION" },
+	{ "FEC_DZL", "LEFT STICK DEAD ZONE" },	// re3-PS3's own
+	{ "FEC_DZR", "RIGHT STICK DEAD ZONE" },	// re3-PS3's own
+	{ "FEA_MPB", "MP3 VOLUME BOOST" },	// re3-PS3's own (Vice City's key)
 	{ "FEC_SN0", "50%" },	// re3-PS3's own
 	{ "FEC_SN1", "75%" },	// re3-PS3's own
 	{ "FEC_SN2", "100%" },	// re3-PS3's own

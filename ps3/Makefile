@@ -95,7 +95,7 @@ GAME_SRCS := $(filter-out \
   $(SRC)/extras/custompipes_d3d9.cpp $(SRC)/extras/custompipes_gl.cpp, $(GAME_SRCS))
 
 PS3_SRCS := $(addprefix $(SRC)/skel/ps3/, \
-  ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp ps3_carspawn.cpp)
+  ps3.cpp ps3_log.cpp ps3_fs.cpp ps3_pad.cpp ps3_cdstream.cpp ps3_prof.cpp ps3_autotest.cpp ps3_carspawn.cpp ps3_mods.cpp)
 
 GAME_INCS := $(foreach d,$(GAME_DIRS),-I$(SRC)/$(d)) -I$(SRC)/skel/ps3 -I$(SRC)/audio/eax
 
@@ -222,6 +222,7 @@ pkgfiles:
 	@rm -rf $(PKGFILES)
 	@mkdir -p $(PKGFILES)/USRDIR/userfiles
 	@for d in $(DATA_DIRS); do mkdir -p $(PKGFILES)/USRDIR/$$d; done
+	@mkdir -p $(PKGFILES)/USRDIR/mods
 	@for f in $(RE3_FILES); do cp $(ROOT)/gamefiles/models/$$f $(PKGFILES)/USRDIR/models/; done
 	@printf "%s\n%s\npatch %s\nbuilt %s\n" "$(TITLE)" "$(TARGET) $(VARIANT)" "$(PATCHLEVEL)" \
 	  "$$(date '+%Y-%m-%d %H:%M')" > $(PKGFILES)/USRDIR/VERSION.TXT
