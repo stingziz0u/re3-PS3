@@ -61,7 +61,8 @@ PlayStation button icons and the controller picture of the settings page).
 - PS2-style controls with lock-on aiming, four pad setups, button
   redefinition, inverted look, free camera, right stick sensitivity for third
   person (free camera) and first person (aiming, sniper, look around), 20% to
-  200% in steps of 5, stick dead zones 5% to 50% and vibration
+  200% in steps of 5, stick dead zones (left 5% to 70%; right DEFAULT or 5%
+  to 70%, where the camera starts turning) and vibration
   (*Controller setup > Gamepad settings*). PlayStation buttons in the
   on-screen help.
 - **Aiming: III / Vice City** (*Controller setup > Gamepad settings*): with

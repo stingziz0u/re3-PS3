@@ -504,6 +504,13 @@ bool LoadINISettings()
 	ReadIniIfExists("Controller", "Vibration", &FrontEndMenuManager.m_PrefsUseVibration);
 	ReadIniIfExists("Audio", "SfxVolume", &FrontEndMenuManager.m_PrefsSfxVolume);
 	ReadIniIfExists("Audio", "MusicVolume", &FrontEndMenuManager.m_PrefsMusicVolume);
+#ifdef __PS3__
+	{
+		extern int8 gPS3Mp3Boost;	// Vice City's MP3 VOLUME BOOST, 0..64
+		ReadIniIfExists("Audio", "MP3BoostVolume", &gPS3Mp3Boost);
+		gPS3Mp3Boost = clamp(gPS3Mp3Boost, 0, 64);
+	}
+#endif
 	ReadIniIfExists("Audio", "Radio", &FrontEndMenuManager.m_PrefsRadioStation);
 	ReadIniIfExists("Audio", "SpeakerType", &FrontEndMenuManager.m_PrefsSpeakers);
 	ReadIniIfExists("Audio", "Provider", &FrontEndMenuManager.m_nPrefsAudio3DProviderIndex);
@@ -603,6 +610,12 @@ void SaveINISettings()
 	StoreIni("Controller", "Vibration", FrontEndMenuManager.m_PrefsUseVibration);
 	StoreIni("Audio", "SfxVolume", FrontEndMenuManager.m_PrefsSfxVolume);
 	StoreIni("Audio", "MusicVolume", FrontEndMenuManager.m_PrefsMusicVolume);
+#ifdef __PS3__
+	{
+		extern int8 gPS3Mp3Boost;
+		StoreIni("Audio", "MP3BoostVolume", gPS3Mp3Boost);
+	}
+#endif
 	StoreIni("Audio", "Radio", FrontEndMenuManager.m_PrefsRadioStation);
 	StoreIni("Audio", "SpeakerType", FrontEndMenuManager.m_PrefsSpeakers);
 	StoreIni("Audio", "Provider", FrontEndMenuManager.m_nPrefsAudio3DProviderIndex);

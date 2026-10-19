@@ -934,6 +934,18 @@ CMenuManager::CheckSliderMovement(int value)
 		m_PrefsMusicVolume = clamp(m_PrefsMusicVolume, 0, 127);
 		DMAudio.SetMusicMasterVolume(m_PrefsMusicVolume);
 		break;
+#ifdef __PS3__
+	case MENUACTION_MP3VOLUMEBOOST:
+		// Vice City's MP3 VOLUME BOOST: 0..64 in steps of 4 (+0% to +100%,
+		// sampman_ps3.cpp), only with MP3 files in USRDIR/mp3
+		if (!DMAudio.IsMP3RadioChannelAvailable())
+			return;
+		{
+			extern int8 gPS3Mp3Boost;
+			gPS3Mp3Boost = clamp(gPS3Mp3Boost + value * (128/32), 0, 64);
+		}
+		break;
+#endif
 	case MENUACTION_SFXVOLUME:
 		m_PrefsSfxVolume += value * (128/16);
 		m_PrefsSfxVolume = clamp(m_PrefsSfxVolume, 0, 127);
@@ -1445,6 +1457,12 @@ CMenuManager::Draw()
 				}
 				break;
 			}
+#ifdef __PS3__
+			case MENUACTION_MP3VOLUMEBOOST:
+				if (!DMAudio.IsMP3RadioChannelAvailable())
+					rightText = TheText.Get("FEA_NM3");
+				break;
+#endif
 			case MENUACTION_CTRLVIBRATION:
 				if (m_PrefsUseVibration)
 					rightText = TheText.Get("FEM_ON");
@@ -1818,6 +1836,15 @@ CMenuManager::Draw()
 				case MENUACTION_MUSICVOLUME:
 					ProcessSlider(m_PrefsMusicVolume / 128.0f, HOVEROPTION_INCREASE_MUSICVOLUME, HOVEROPTION_DECREASE_MUSICVOLUME, MENU_X_LEFT_ALIGNED(170.0f), SCREEN_WIDTH);
 					break;
+#ifdef __PS3__
+				case MENUACTION_MP3VOLUMEBOOST:
+					// as Vice City: the bar only with MP3 files (else "NO MP3 FILES FOUND")
+					if (DMAudio.IsMP3RadioChannelAvailable()) {
+						extern int8 gPS3Mp3Boost;
+						ProcessSlider(gPS3Mp3Boost / 64.0f, HOVEROPTION_NOT_HOVERING, HOVEROPTION_NOT_HOVERING, MENU_X_LEFT_ALIGNED(170.0f), SCREEN_WIDTH);
+					}
+					break;
+#endif
 				case MENUACTION_SFXVOLUME:
 					ProcessSlider(m_PrefsSfxVolume / 128.0f, HOVEROPTION_INCREASE_SFXVOLUME, HOVEROPTION_DECREASE_SFXVOLUME, MENU_X_LEFT_ALIGNED(170.0f), SCREEN_WIDTH);
 					break;
@@ -4934,6 +4961,9 @@ CMenuManager::ProcessButtonPresses(void)
 			}
 		} else if (option != MENUACTION_CHANGEMENU && option != MENUACTION_BRIGHTNESS && option != MENUACTION_DRAWDIST
 			&& option != MENUACTION_MUSICVOLUME && option != MENUACTION_SFXVOLUME
+#ifdef __PS3__
+			&& option != MENUACTION_MP3VOLUMEBOOST
+#endif
 			&& option != MENUACTION_CHECKSAVE && option != MENUACTION_UNK24
 			&& option != MENUACTION_MOUSESENS && option != MENUACTION_SCREENRES) {
 

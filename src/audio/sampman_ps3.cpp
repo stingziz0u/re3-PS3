@@ -633,7 +633,7 @@ struct Mp3Entry
 };
 static Mp3Entry *mp3List;
 static uint32 curMp3Index;
-int8 gPS3Mp3Boost;		// 0..10: +0%..+100% (Audio menu, MP3 BOOST)
+int8 gPS3Mp3Boost;		// 0..64: +0%..+100% (Audio menu, MP3 VOLUME BOOST, Vice City's scale)
 static bool mp3Active;		// stream 0 plays one of them (its end: the next one)
 
 static int
@@ -1665,10 +1665,11 @@ ApplyStreamVolume(cSampleManager *sm, uint8 nStream, uint8 nEffectFlag, uint8 fx
 		s->volume = MasterVolume(fxFade, nStreamVolume[nStream], fxVol);
 	else{
 		s->volume = MasterVolume(musFade, nStreamVolume[nStream], musVol);
-		// MP3 BOOST (Audio menu), as Vice City's: only while the MP3 player plays,
-		// up to twice the music volume (the float mix takes it, the output clips)
+		// MP3 VOLUME BOOST (Audio menu), as Vice City's: only while the MP3
+		// player plays, up to twice the music volume (x (1 + boost/64); the
+		// float mix takes it, the output clips)
 		if(nStream == 0 && mp3Active && gPS3Mp3Boost > 0)
-			s->volume = s->volume * (10 + clamp((int)gPS3Mp3Boost, 0, 10)) / 10;
+			s->volume = s->volume * (64 + clamp((int)gPS3Mp3Boost, 0, 64)) / 64;
 	}
 	s->pan = nStreamPan[nStream];
 }

@@ -33,15 +33,24 @@ static int nopad;
 static unsigned char buttons[15];
 static float axes[6];
 
-// Gamepad settings: stick dead zones, percent / 5 (1..10 = 5%..50%; 6 = 30%,
-// the 0.3 the game always had). An axis under it reads as centred
-int8 gPS3DeadzoneL = 6, gPS3DeadzoneR = 6;
+// Gamepad settings: stick dead zones, percent / 5.
+//  - left: 1..14 = 5%..70%, 6 = 30% (the 0.3 the game always had): an axis
+//    under it reads as centred.
+//  - right: 0 = DEFAULT, the game's own (0.3 here, and then the camera only
+//    turns past 85 of 128, two thirds of the way: CPad::LookAroundLeftRight);
+//    1..14 = 5%..70% replaces both (Pad.cpp, PS3_LookAround).
+int8 gPS3DeadzoneL = 6, gPS3DeadzoneR = 0;
 
 float
 PS3_PadDeadzone(bool right)
 {
-	int v = right ? gPS3DeadzoneR : gPS3DeadzoneL;
-	if (v < 1 || v > 10)
+	if (right) {
+		if (gPS3DeadzoneR < 1 || gPS3DeadzoneR > 14)
+			return -1.0f;	// DEFAULT
+		return gPS3DeadzoneR * 0.05f;
+	}
+	int v = gPS3DeadzoneL;
+	if (v < 1 || v > 14)
 		v = 6;
 	return v * 0.05f;
 }
@@ -62,6 +71,8 @@ PS3_PadInit(void)
 		return;
 	s32 ret = ioPadInit(7);
 	PS3_Logf("[pad] ioPadInit ret=%d", (int)ret);
+	PS3_Logf("[pad] dead zones: left %d%%, right %s", (int)(PS3_PadDeadzone(false) * 100.0f + 0.5f),
+	         PS3_PadDeadzone(true) < 0 ? "default" : "set");
 	if (ret < 0)
 		return;
 	initialized = 1;
@@ -343,9 +354,14 @@ PS3_PadRumble(int large)
 	memset(&act, 0, sizeof(act));
 	act.small_motor = 0;
 	act.large_motor = (u8)large;
-	ioPadSetActDirect(port, &act);
-	if ((large != 0) != (last > 0))
-		PS3_Logf("[pad] vibration %s (%d) on port %d", large ? "on" : "off", large, port);
+	s32 r = (s32)ioPadSetActDirect(port, &act);
+	static int logged;
+	if (((large != 0) != (last > 0) && logged < 40) || (r != 0 && logged < 40)) {
+		logged++;
+		PS3_Logf("[pad] vibration %s (%d) on port %d: ioPadSetActDirect = 0x%x, pad capability 0x%x (vibration %s)",
+		         large ? "on" : "off", large, port, (unsigned)r, (unsigned)info.device_capability[port],
+		         info.device_capability[port] & 0x10 ? "yes" : "no");
+	}
 	last = large;
 	lastPort = port;
 	lastSend = now;

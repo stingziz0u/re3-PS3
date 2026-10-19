@@ -30,6 +30,7 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEC_DZL", "LEFT STICK DEAD ZONE" },	// re3-PS3's own
 	{ "FEC_DZR", "RIGHT STICK DEAD ZONE" },	// re3-PS3's own
 	{ "FEA_MPB", "MP3 VOLUME BOOST" },	// re3-PS3's own (Vice City's key)
+	{ "FEA_NM3", "NO MP3 FILES FOUND" },	// re3-PS3's own (Vice City's key)
 	{ "FEC_SN0", "50%" },	// re3-PS3's own
 	{ "FEC_SN1", "75%" },	// re3-PS3's own
 	{ "FEC_SN2", "100%" },	// re3-PS3's own

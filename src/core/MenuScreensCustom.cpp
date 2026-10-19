@@ -71,69 +71,42 @@ static wchar *Sens3rdDraw(bool *disabled, bool userHovering) { return SensDraw(g
 static wchar *Sens1stDraw(bool *disabled, bool userHovering) { return SensDraw(gPS3Sens1st); }
 static void Sens3rdPress(int8 action) { SensPress(&gPS3Sens3rd, action); }
 static void Sens1stPress(int8 action) { SensPress(&gPS3Sens1st, action); }
-// stick dead zones: 5% to 50% in steps of 5 (percent / 5, ps3_pad.cpp),
-// X back to 30%, the game's own
+// stick dead zones (ps3_pad.cpp), percent / 5: left 5% to 70%, X back to
+// 30% (the game's own); right DEFAULT (the game's own: the camera turns from
+// two thirds of the way) or 5% to 70%, X back to DEFAULT
 extern int8 gPS3DeadzoneL, gPS3DeadzoneR;
 static wchar *
-DeadzoneDraw(int8 value)
+DeadzoneDraw(int8 value, bool canDefault)
 {
 	static wchar text[2][16];
 	static int which;
 	char str[16];
+	if (canDefault && (value < 1 || value > 14))
+		return TheText.Get("FEG_TF0");	// DEFAULT
 	which ^= 1;
-	sprintf(str, "%d%%", 5*clamp((int)value, 1, 10));
+	sprintf(str, "%d%%", 5*(value < 1 || value > 14 ? 6 : value));
 	AsciiToUnicode(str, text[which]);
 	return text[which];
 }
 static void
-DeadzonePress(int8 *value, int8 action)
+DeadzonePress(int8 *value, int8 action, int8 lowest, int8 reset)
 {
-	if (*value < 1 || *value > 10)
-		*value = 6;
-	if (action == FEOPTION_ACTION_LEFT && *value > 1)
+	if (*value < lowest || *value > 14)
+		*value = reset;
+	if (action == FEOPTION_ACTION_LEFT && *value > lowest)
 		(*value)--;
-	else if (action == FEOPTION_ACTION_RIGHT && *value < 10)
+	else if (action == FEOPTION_ACTION_RIGHT && *value < 14)
 		(*value)++;
 	else if (action == FEOPTION_ACTION_SELECT)
-		*value = 6;	// 30%
+		*value = reset;
 	else
 		return;
 	FrontEndMenuManager.SaveSettings();
 }
-static wchar *DeadzoneLDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneL); }
-static wchar *DeadzoneRDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneR); }
-static void DeadzoneLPress(int8 action) { DeadzonePress(&gPS3DeadzoneL, action); }
-static void DeadzoneRPress(int8 action) { DeadzonePress(&gPS3DeadzoneR, action); }
-// Audio menu: MP3 BOOST, as Vice City's (+0% to +100% while the MP3 player
-// plays; sampman_ps3.cpp). Greyed out without USRDIR/mp3 files
-extern int8 gPS3Mp3Boost;
-static wchar *
-Mp3BoostDraw(bool *disabled, bool userHovering)
-{
-	static wchar text[16];
-	char str[16];
-	*disabled = !DMAudio.IsMP3RadioChannelAvailable();
-	sprintf(str, "+%d%%", 10*clamp((int)gPS3Mp3Boost, 0, 10));
-	AsciiToUnicode(str, text);
-	return text;
-}
-static void
-Mp3BoostPress(int8 action)
-{
-	if (!DMAudio.IsMP3RadioChannelAvailable())
-		return;
-	if (gPS3Mp3Boost < 0 || gPS3Mp3Boost > 10)
-		gPS3Mp3Boost = 0;
-	if (action == FEOPTION_ACTION_LEFT && gPS3Mp3Boost > 0)
-		gPS3Mp3Boost--;
-	else if (action == FEOPTION_ACTION_RIGHT && gPS3Mp3Boost < 10)
-		gPS3Mp3Boost++;
-	else if (action == FEOPTION_ACTION_SELECT)
-		gPS3Mp3Boost = 0;
-	else
-		return;
-	FrontEndMenuManager.SaveSettings();
-}
+static wchar *DeadzoneLDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneL, false); }
+static wchar *DeadzoneRDraw(bool *disabled, bool userHovering) { return DeadzoneDraw(gPS3DeadzoneR, true); }
+static void DeadzoneLPress(int8 action) { DeadzonePress(&gPS3DeadzoneL, action, 1, 6); }	// 30%
+static void DeadzoneRPress(int8 action) { DeadzonePress(&gPS3DeadzoneR, action, 0, 0); }	// DEFAULT
 #ifdef __PS3__
 // FRAME RATE: 30 (the game's own, re3/PS2) or 60. ps3.cpp paces the flips
 int8 gPS3Fps60;
@@ -584,7 +557,7 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 		MENUACTION_CFO_DYNAMIC, "FEC_S3P", { new CCFODynamic((int8*)&gPS3Sens3rd, "Controller", "Sens3rdPct5", Sens3rdDraw, Sens3rdPress) },
 		MENUACTION_CFO_DYNAMIC, "FEC_S1P", { new CCFODynamic((int8*)&gPS3Sens1st, "Controller", "Sens1stPct5", Sens1stDraw, Sens1stPress) },
 		MENUACTION_CFO_DYNAMIC, "FEC_DZL", { new CCFODynamic((int8*)&gPS3DeadzoneL, "Controller", "DeadzoneLPct5", DeadzoneLDraw, DeadzoneLPress) },
-		MENUACTION_CFO_DYNAMIC, "FEC_DZR", { new CCFODynamic((int8*)&gPS3DeadzoneR, "Controller", "DeadzoneRPct5", DeadzoneRDraw, DeadzoneRPress) },
+		MENUACTION_CFO_DYNAMIC, "FEC_DZR", { new CCFODynamic((int8*)&gPS3DeadzoneR, "Controller", "DeadzoneRight", DeadzoneRDraw, DeadzoneRPress) },
 #endif
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS },
 		SELECT_CONTROLLER_TYPE
@@ -600,7 +573,7 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 		MENUACTION_DYNAMICACOUSTIC,	"FET_DAM", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 		MENUACTION_RADIO,			"FEA_RSS", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 #ifdef __PS3__
-		MENUACTION_CFO_DYNAMIC,		"FEA_MPB", { new CCFODynamic((int8*)&gPS3Mp3Boost, "Audio", "MP3Boost", Mp3BoostDraw, Mp3BoostPress) },
+		MENUACTION_MP3VOLUMEBOOST,	"FEA_MPB", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 #endif
 		MENUACTION_RESTOREDEF,		"FET_DEF", { nil, SAVESLOT_NONE, MENUPAGE_SOUND_SETTINGS },
 		MENUACTION_CHANGEMENU,		"FEDS_TB", { nil, SAVESLOT_NONE, MENUPAGE_NONE },
