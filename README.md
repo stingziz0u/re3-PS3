@@ -16,54 +16,6 @@ your own PC copy.
 > [Troubleshooting](#troubleshooting)).
 > Only tested on real consoles, not on RPCS3.
 >
-> 1.1 alpha brings the fixes found while making
-> [reVC-PS3](https://github.com/stingziz0u/reVC-PS3) 1.1.2: code that only
-> worked with the PC compiler (compiler optimizations that broke the original
-> code, unset variables, loops that could freeze the game), particles animated
-> past the end of their texture list, saves that wrote pointers unaligned,
-> full pools and stale pointers, half the smoke particles at 60 fps, DXT1
-> textures in 16 bits in video memory, and a log that records what the game
-> was doing when it crashes or freezes. New: right stick sensitivity
-> settings, and graphics options: mipmaps, texture filtering (bilinear,
-> trilinear, anisotropic) and antialiasing (FXAA), and fewer hitches when
-> new areas stream in (textures converted several times faster, spread
-> over frames, and the log written in the background).
->
-> 1.2 alpha brings what [reVC-PS3](https://github.com/stingziz0u/reVC-PS3)
-> 1.3 found: DXT textures stay compressed in video memory, where the RSX
-> reads them as they are (4 times less VRAM, and nothing to convert when an
-> area streams in); textures are converted on the PPU's second thread and
-> mip levels use AltiVec; big smoke and explosion particles right in front
-> of the camera fade out (explosions no longer swamp the RSX). It fixes a
-> crash from deleted objects left in the physics list and other stale
-> pointers, and after a crash the game goes back to the XMB instead of
-> freezing the console.
->
-> 1.3 alpha brings what [reVC-PS3](https://github.com/stingziz0u/reVC-PS3)
-> 1.4 found: the hidden packages and rampages on the radar and the map
-> (optional), a car spawner (L3 + R3), the vehicle rampages get the traffic
-> they need, mission cars no longer deleted under the mission script, the
-> police sirens switch on with a tap of L3 at 60 fps, and the player no
-> longer stays stuck in the air between objects (see
-> [Changes from the original](#changes-from-the-original)). The log now
-> records what a mission script waits for, the pools every 10 s, and more
-> of the audio.
->
-> 1.4 alpha adds the unique jumps to the collectibles on the map, and
-> brings the MP3 player's volume boost of Vice City (*Audio > MP3
-> volume boost*, under SFX), Vice City's aiming as an option (camera on the
-> target, targets in front of the player first), stick dead zones (from the
-> game's 30%) on a new *Stick settings* page, a vibration option, the `mods`
-> folder (files that replace the game's, loose or inside the .img), and only
-> pad 1 plays (pads 2-4 are ignored, as on the PS2). It fixes the static on
-> the skid sounds after a long game and a crash in the audio, both from a
-> bug of the PC game that wrote past the end of the sound queue, a crash
-> opening the map after a while (video memory running out), the green
-> blocks on the map, and the PC keyboard and mouse help texts left in the
-> menus. Textures that don't fit in video memory stay as DXT instead of
-> showing white, pausing takes a few milliseconds instead of 1-2 seconds,
-> the right stick sensitivity goes down to 20%, and the car spawner is off
-> unless `USRDIR/carspawner.txt` exists.
 >
 > **Known issues:**
 > - The pause menu stopped taking input once, on the way to loading a game
