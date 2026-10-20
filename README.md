@@ -11,8 +11,9 @@ your own PC copy.
 
 > **Status: 1.4 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
-> without crashes, but it hasn't had long play-throughs yet. Expect bugs and
-> please report them with the log (see [Troubleshooting](#troubleshooting)).
+> without crashes, and the game has been played to 100% on a real PS3. Expect
+> bugs anyway and please report them with the log (see
+> [Troubleshooting](#troubleshooting)).
 > Only tested on real consoles, not on RPCS3.
 >
 > 1.1 alpha brings the fixes found while making
