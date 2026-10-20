@@ -21,9 +21,6 @@ your own PC copy.
 > - The pause menu stopped taking input once, on the way to loading a game
 >   (still drawn, the game running). The log now records every menu page
 >   and why a menu takes no input; if it happens to you, please send it.
-> - Vibration: the option is there, but the pad didn't vibrate in the tests
->   (the console takes the commands). Check that *Controller Vibration* is
->   on in the XMB settings.
 
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
