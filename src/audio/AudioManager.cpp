@@ -743,6 +743,11 @@ cAudioManager::AddReleasingSounds()
 	int8 queue = m_nActiveSampleQueue == 0 ? 1 : 0;
 
 	for (int32 i = 0; i < m_SampleRequestQueuesStatus[queue]; i++) {
+#ifdef __PS3__
+		// a broken index writes outside the queue (see AdjustSamplesVolume)
+		if (m_abSampleQueueIndexTable[queue][i] >= m_nActiveSamples)
+			continue;
+#endif
 		tSound &sample = m_asSamples[queue][m_abSampleQueueIndexTable[queue][i]];
 		if (sample.m_bLoopEnded)
 			continue;
@@ -1028,7 +1033,19 @@ void
 cAudioManager::AdjustSamplesVolume()
 {
 	for (int i = 0; i < m_SampleRequestQueuesStatus[m_nActiveSampleQueue]; i++) {
+#ifdef FIX_BUGS
+		// the PC game's "+ 1" took the next sample: with the quietest one in
+		// the last slot of queue 1, the one past the array, whose emitting
+		// volume is in m_abSampleQueueIndexTable. The broken index then made
+		// AddReleasingSounds count down a byte far away (the skid sound's
+		// offset in the sample table: static until the game was restarted)
+		uint8 slot = m_abSampleQueueIndexTable[m_nActiveSampleQueue][i];
+		if (slot >= m_nActiveSamples)
+			continue;
+		tSound *pSample = &m_asSamples[m_nActiveSampleQueue][slot];
+#else
 		tSound *pSample = &m_asSamples[m_nActiveSampleQueue][m_abSampleQueueIndexTable[m_nActiveSampleQueue][i] + 1];
+#endif
 
 		if (!pSample->m_bIs2D)
 			pSample->m_nEmittingVolume = ComputeEmittingVolume(pSample->m_nEmittingVolume, pSample->m_fSoundIntensity, pSample->m_fDistance);
