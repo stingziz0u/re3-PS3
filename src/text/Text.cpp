@@ -106,6 +106,21 @@ CText::Get(const char *key)
 	wchar *text = keyArray.Search(key);
 #endif
 #ifdef __PS3__
+	{
+		// the pad's buttons where the PC text says keyboard or mouse
+		static wchar *ocache[ARRAY_SIZE(ps3TextOverride)];
+		for (int i = 0; i < ARRAY_SIZE(ps3TextOverride); i++) {
+			if (strcmp(ps3TextOverride[i].key, key) != 0)
+				continue;
+			if (ocache[i] == nil) {
+				size_t len = strlen(ps3TextOverride[i].text);
+				ocache[i] = new wchar[len + 1];
+				for (size_t j = 0; j <= len; j++)
+					ocache[i][j] = (uint8)ps3TextOverride[i].text[j];
+			}
+			return ocache[i];
+		}
+	}
 	if (text == WideErrorString) {
 		// re3's own menu keys aren't in the PC american.gxt
 		static wchar *cache[ARRAY_SIZE(ps3TextFallback)];

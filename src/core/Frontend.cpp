@@ -562,7 +562,12 @@ CMenuManager::ProcessList(bool &goBack, bool &optionSelected)
 		optionSelected = true;
 	}
 #endif
+#ifdef __PS3__
+	// no keyboard: square clears the binding (FET_CIG, ps3_textfallback.h)
+	if ((CPad::GetPad(0)->GetBackspaceJustDown() || CPad::GetPad(0)->GetSquareJustDown()) && m_nCurrScreen == MENUPAGE_KEYBOARD_CONTROLS && !field_535) {
+#else
 	if (CPad::GetPad(0)->GetBackspaceJustDown() && m_nCurrScreen == MENUPAGE_KEYBOARD_CONTROLS && !field_535) {
+#endif
 		if (m_nCurrExLayer == HOVEROPTION_LIST) {
 			m_nHoverOption = HOVEROPTION_NOT_HOVERING;
 			m_bWaitingForNewKeyBind = true;
@@ -1001,6 +1006,15 @@ CMenuManager::DisplayHelperText()
 		case 0:
 		{
 			int action = aScreens[m_nCurrScreen].m_aEntries[m_nCurrOption].m_Action;
+#ifdef __PS3__
+			// not under the gamepad picture, nor on the map (its own help)
+			if (m_nCurrScreen == MENUPAGE_CONTROLLER_SETTINGS
+#ifdef MENU_MAP
+			    || m_nCurrScreen == MENUPAGE_MAP
+#endif
+			    )
+				break;
+#endif
 			if (action != MENUACTION_CHANGEMENU && action != MENUACTION_KEYBOARDCTRLS && action != MENUACTION_RESTOREDEF) {
 				CFont::SetColor(CRGBA(255, 255, 255, 255));
 				CFont::PrintString(MENU_X_LEFT_ALIGNED(HELPER_TEXT_LEFT_MARGIN), SCREEN_SCALE_FROM_BOTTOM(HELPER_TEXT_BOTTOM_MARGIN), TheText.Get("FET_MIG"));
@@ -1200,7 +1214,11 @@ CMenuManager::Draw()
 #ifdef FIX_BUGS
 		case MENUPAGE_CONTROLLER_SETTINGS:
 			columnWidth = 50;
+#ifdef __PS3__
+			headerHeight = -60;	// the rows a little higher: room for the controller picture
+#else
 			headerHeight = -50;
+#endif
 			lineHeight = 20;
 			CFont::SetFontStyle(FONT_LOCALE(FONT_HEADING));
 			CFont::SetScale(MENU_X(MENU_TEXT_SIZE_X = MEDIUMTEXT_X_SCALE), MENU_Y(MENU_TEXT_SIZE_Y = MEDIUMTEXT_Y_SCALE));
@@ -5996,7 +6014,7 @@ CMenuManager::PrintController(void)
 	const float CONTROLLER_SIZE_Y = 175.2f;
 	const float CONTROLLER_POS_X = (DEFAULT_SCREEN_WIDTH - CONTROLLER_SIZE_X) / 2.0f;
 #ifdef __PS3__
-	const float CONTROLLER_POS_Y = 200.0f;	// below the page's options (two more in 1.1)
+	const float CONTROLLER_POS_Y = 188.0f;	// below the page's options (Ren: a little higher than 200)
 #else
 	const float CONTROLLER_POS_Y = 160.0f;
 #endif

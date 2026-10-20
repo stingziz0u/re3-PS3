@@ -192,3 +192,13 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FET_RSO", "ORIGINAL SETTING RESTORED" },
 	{ "FET_SCN", "CONTROLS: STANDARD" },
 };
+
+// re3-PS3: keys whose PC text names the keyboard or the mouse. These win over
+// the GXT (CText::Get): the pad's buttons instead.
+static const struct { const char *key; const char *text; } ps3TextOverride[] = {
+	{ "FET_MIG", "LEFT / RIGHT TO ADJUST" },	// "LEFT,RIGHT,MOUSEWHEEL TO ADJUST"
+	{ "FET_APP", "~X~ TO APPLY THE NEW SETTING" },	// "LMB,RETURN TO APPLY..."
+	{ "FET_CIG", "~Q~ TO CLEAR - ~X~ TO CHANGE" },	// "BACKSPACE TO CLEAR - LMB,RETURN TO CHANGE"
+	{ "FET_RIG", "PRESS THE NEW BUTTON FOR THIS ACTION" },	// "...OR ESC TO CANCEL"
+	{ "FEH_SSA", "UP / DOWN TO SCROLL" },	// "CURSORS TO MOVE - S TO SAVE TO FILE"
+};
