@@ -21,6 +21,7 @@
 #include "GenericGameStorage.h"
 #include "Script.h"
 #include "Camera.h"
+#include "CutsceneMgr.h"
 #include "ControllerConfig.h"
 #include "Vehicle.h"
 #include "MBlur.h"
@@ -7190,5 +7191,43 @@ CMenuManager::ConstructStatLine(int rowIdx)
 #undef GetBackJustUp
 #undef GetBackJustDown
 #undef ChangeScreen
+
+#ifdef __PS3__
+// [menu] lines: pages opened, and a menu that takes no input (Ren: the menu
+// froze on the way to loading a game, still drawn at 60 fps). Called every
+// frame from CGame::Process, processed = the menu ran this frame.
+void
+PS3_MenuWatch(bool processed)
+{
+	static int32 lastScreen = -2;
+	static bool lastActive;
+	static uint32 stuckSince;
+	static int stuckLogs;
+	CMenuManager &m = FrontEndMenuManager;
+	if (m.m_bMenuActive != lastActive || (m.m_bMenuActive && m.m_nCurrScreen != lastScreen)) {
+		if (m.m_bMenuActive)
+			PS3_Logf("[menu] screen %d", (int)m.m_nCurrScreen);
+		else
+			PS3_Log("[menu] closed");
+		lastActive = m.m_bMenuActive;
+		lastScreen = m.m_nCurrScreen;
+	}
+	int fade = TheCamera.GetScreenFadeStatus();
+	// CMenuManager::Process returns at once while the screen fades
+	bool stuck = m.m_bMenuActive && (!processed || (!m.m_bSaveMenuActive && fade != FADE_0));
+	uint32 now = CTimer::GetTimeInMillisecondsPauseMode();
+	if (!stuck)
+		stuckSince = 0;
+	else if (stuckSince == 0)
+		stuckSince = now ? now : 1;
+	else if (now - stuckSince > 3000 && stuckLogs < 8) {
+		stuckLogs++;
+		stuckSince = now;
+		PS3_Logf("[menu] screen %d takes no input for 3 s: %s (fade %d, %.0f; code paused %d, cutscene %d)",
+		         (int)m.m_nCurrScreen, processed ? "the screen is fading" : "not processed",
+		         fade, TheCamera.m_fFLOATingFade, (int)CTimer::GetIsCodePaused(), (int)CCutsceneMgr::IsCutsceneProcessing());
+	}
+}
+#endif
     
 #endif

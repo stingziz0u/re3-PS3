@@ -4,7 +4,7 @@
 // The pad code is Doom64-PS3's / Quake2PS3's (survived plugging, unplugging
 // and powering pads off and on on hardware):
 //  - ioPadGetInfo2 (per port status, bit 1 = "assignment changed");
-//  - the active port is resolved again every frame;
+//  - every connected pad is read, and they all play (MergePad);
 //  - the data is NOT skipped when len == 0 (the buffer keeps the previous
 //    poll; skipping freezes the sticks);
 //  - if the library keeps failing, it is ended and started again.
@@ -27,7 +27,6 @@ static padData data;
 static int initialized;
 static int connected;
 static int port = -1;
-static int failures;
 static int nopad;
 
 static unsigned char buttons[15];
@@ -90,26 +89,91 @@ PS3_PadShutdown(void)
 	port = -1;
 }
 
+static padData portData[MAX_PORT_NUM];	// each pad's last poll
+static bool portOn[MAX_PORT_NUM];
+static bool portWaitInput[MAX_PORT_NUM];	// log its first input
+static int portFailures[MAX_PORT_NUM];
+
+static void
+CenterData(padData *d)
+{
+	memset(d, 0, sizeof(*d));
+	d->ANA_R_H = d->ANA_R_V = STICK_CENTER;
+	d->ANA_L_H = d->ANA_L_V = STICK_CENTER;
+}
+
 static void
 PadReinit(const char *why)
 {
 	s32 a = ioPadEnd();
 	s32 b = ioPadInit(7);
-	for (int i = 0; i < MAX_PORT_NUM; i++)
+	for (int i = 0; i < MAX_PORT_NUM; i++) {
 		ioPadSetPressMode(i, PAD_PRESS_MODE_ON);
+		portOn[i] = false;
+		portFailures[i] = 0;
+		CenterData(&portData[i]);
+	}
 	PS3_Logf("[pad] ioPad restarted (%s): end=%d init=%d", why, (int)a, (int)b);
 	port = -1;
-	failures = 0;
 	nopad = 0;
 	connected = 0;
 	ReleaseAll();
+}
+
+static int
+StickOff(unsigned v)
+{
+	int d = (int)v - STICK_CENTER;
+	return d < 0 ? -d : d;
+}
+
+static bool
+HasInput(const padData &d)
+{
+	return d.BTN_CROSS || d.BTN_CIRCLE || d.BTN_SQUARE || d.BTN_TRIANGLE ||
+	       d.BTN_L1 || d.BTN_R1 || d.BTN_L2 || d.BTN_R2 || d.BTN_L3 || d.BTN_R3 ||
+	       d.BTN_START || d.BTN_SELECT || d.BTN_UP || d.BTN_DOWN || d.BTN_LEFT || d.BTN_RIGHT ||
+	       StickOff(d.ANA_L_H) > 48 || StickOff(d.ANA_L_V) > 48 ||
+	       StickOff(d.ANA_R_H) > 48 || StickOff(d.ANA_R_V) > 48;
+}
+
+// every connected pad plays: the buttons of all of them, each stick axis
+// from the pad pushing it furthest. Ren: with the active pad picked by its
+// port, a DS3 that dropped out and came back on another port (the XMB gives
+// it the next number while the old one is still being released) left the
+// player on the other pad, or none.
+static void
+MergePad(const padData &d)
+{
+	data.BTN_CROSS |= d.BTN_CROSS;
+	data.BTN_CIRCLE |= d.BTN_CIRCLE;
+	data.BTN_SQUARE |= d.BTN_SQUARE;
+	data.BTN_TRIANGLE |= d.BTN_TRIANGLE;
+	data.BTN_L1 |= d.BTN_L1;
+	data.BTN_R1 |= d.BTN_R1;
+	data.BTN_L2 |= d.BTN_L2;
+	data.BTN_R2 |= d.BTN_R2;
+	data.BTN_L3 |= d.BTN_L3;
+	data.BTN_R3 |= d.BTN_R3;
+	data.BTN_START |= d.BTN_START;
+	data.BTN_SELECT |= d.BTN_SELECT;
+	data.BTN_UP |= d.BTN_UP;
+	data.BTN_DOWN |= d.BTN_DOWN;
+	data.BTN_LEFT |= d.BTN_LEFT;
+	data.BTN_RIGHT |= d.BTN_RIGHT;
+	if (StickOff(d.ANA_L_H) > StickOff(data.ANA_L_H)) data.ANA_L_H = d.ANA_L_H;
+	if (StickOff(d.ANA_L_V) > StickOff(data.ANA_L_V)) data.ANA_L_V = d.ANA_L_V;
+	if (StickOff(d.ANA_R_H) > StickOff(data.ANA_R_H)) data.ANA_R_H = d.ANA_R_H;
+	if (StickOff(d.ANA_R_V) > StickOff(data.ANA_R_V)) data.ANA_R_V = d.ANA_R_V;
+	if (d.PRE_L2 > data.PRE_L2) data.PRE_L2 = d.PRE_L2;
+	if (d.PRE_R2 > data.PRE_R2) data.PRE_R2 = d.PRE_R2;
 }
 
 static void
 ReadPad(void)
 {
 	static u32 last_status[MAX_PORT_NUM];
-	int i, p = -1;
+	int i, pads = 0;
 	s32 r;
 
 	if (!initialized) {
@@ -137,20 +201,47 @@ ReadPad(void)
 		// assignment changed: drop that port's stale buffer
 		if (info.port_status[i] & 2)
 			ioPadClearBuf(i);
+
+		bool on = (info.port_status[i] & 1) != 0;
+		if (on && !portOn[i]) {
+			portOn[i] = true;
+			portWaitInput[i] = true;
+			portFailures[i] = 0;
+			CenterData(&portData[i]);
+			ioPadClearBuf(i);
+			PS3_Logf("[pad] pad on port %d plays", i);
+		} else if (!on && portOn[i]) {
+			portOn[i] = false;
+			CenterData(&portData[i]);
+			PS3_Logf("[pad] pad on port %d gone", i);
+		}
+		if (!on)
+			continue;
+		pads++;
+
+		// NOT skipped when len == 0 on purpose, see the header
+		r = ioPadGetData(i, &portData[i]);
+		if (r != 0) {
+			if (portFailures[i] < 5)
+				PS3_Logf("[pad] ioPadGetData(%d) = %d", i, (int)r);
+			if (++portFailures[i] == 180) {
+				PadReinit("GetData failing");
+				return;
+			}
+			// keep the previous state: don't release buttons
+			continue;
+		}
+		portFailures[i] = 0;
+		if (HasInput(portData[i])) {
+			if (portWaitInput[i]) {
+				portWaitInput[i] = false;
+				PS3_Logf("[pad] port %d: first input", i);
+			}
+			port = i;	// the last pad used: the one that vibrates
+		}
 	}
 
-	// keep the current port while it stays connected, otherwise the first
-	// connected one
-	if (port >= 0 && (info.port_status[port] & 1))
-		p = port;
-	else
-		for (i = 0; i < MAX_PORT_NUM; i++)
-			if (info.port_status[i] & 1) {
-				p = i;
-				break;
-			}
-
-	if (p < 0) {
+	if (pads == 0) {
 		if (connected)
 			PS3_Log("[pad] no pad connected");
 		connected = 0;
@@ -159,28 +250,19 @@ ReadPad(void)
 		nopad++;
 		return;
 	}
-
-	if (!connected || p != port) {
-		PS3_Logf("[pad] active pad on port %d (was %d)", p, port);
-		ioPadClearBuf(p);
-		ReleaseAll();
-		failures = 0;
-	}
-	port = p;
+	if (port < 0 || !portOn[port])
+		for (i = 0; i < MAX_PORT_NUM; i++)
+			if (portOn[i]) {
+				port = i;
+				break;
+			}
 	connected = 1;
 	nopad = 0;
 
-	r = ioPadGetData(port, &data);
-	if (r != 0) {
-		if (failures < 5)
-			PS3_Logf("[pad] ioPadGetData(%d) = %d", port, (int)r);
-		if (++failures == 180)
-			PadReinit("GetData failing");
-		// keep the previous state: don't release buttons
-		return;
-	}
-	failures = 0;
-	// NOT bailing out on len == 0 on purpose, see the header
+	ReleaseAll();
+	for (i = 0; i < MAX_PORT_NUM; i++)
+		if (portOn[i])
+			MergePad(portData[i]);
 }
 
 static float

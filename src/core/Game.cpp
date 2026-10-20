@@ -1021,8 +1021,18 @@ void CGame::Process(void)
 
 	PUSH_MEMID(MEMID_FRONTEND);
 	PS3_CRUMB("FrontEndMenuManager.Process", 0);
+#ifdef __PS3__
+	{
+		extern void PS3_MenuWatch(bool processed);
+		bool menuProcessed = !CCutsceneMgr::IsCutsceneProcessing() && !CTimer::GetIsCodePaused();
+		if (menuProcessed)
+			FrontEndMenuManager.Process();
+		PS3_MenuWatch(menuProcessed);
+	}
+#else
 	if (!CCutsceneMgr::IsCutsceneProcessing() && !CTimer::GetIsCodePaused())
 		FrontEndMenuManager.Process();
+#endif
 	POP_MEMID();
 
 	PS3_CRUMB("CStreaming::Update", 0);
