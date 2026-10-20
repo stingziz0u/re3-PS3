@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.3 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.4 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, but it hasn't had long play-throughs yet. Expect bugs and
 > please report them with the log (see [Troubleshooting](#troubleshooting)).
@@ -47,6 +47,30 @@ your own PC copy.
 > [Changes from the original](#changes-from-the-original)). The log now
 > records what a mission script waits for, the pools every 10 s, and more
 > of the audio.
+>
+> 1.4 alpha adds the unique jumps to the collectibles on the map, and
+> brings the MP3 player's volume boost of Vice City (*Audio > MP3
+> volume boost*, under SFX), Vice City's aiming as an option (camera on the
+> target, targets in front of the player first), stick dead zones (from the
+> game's 30%) on a new *Stick settings* page, a vibration option, the `mods`
+> folder (files that replace the game's, loose or inside the .img), and only
+> pad 1 plays (pads 2-4 are ignored, as on the PS2). It fixes the static on
+> the skid sounds after a long game and a crash in the audio, both from a
+> bug of the PC game that wrote past the end of the sound queue, a crash
+> opening the map after a while (video memory running out), the green
+> blocks on the map, and the PC keyboard and mouse help texts left in the
+> menus. Textures that don't fit in video memory stay as DXT instead of
+> showing white, pausing takes a few milliseconds instead of 1-2 seconds,
+> the right stick sensitivity goes down to 20%, and the car spawner is off
+> unless `USRDIR/carspawner.txt` exists.
+>
+> **Known issues:**
+> - The pause menu stopped taking input once, on the way to loading a game
+>   (still drawn, the game running). The log now records every menu page
+>   and why a menu takes no input; if it happens to you, please send it.
+> - Vibration: the option is there, but the pad didn't vibrate in the tests
+>   (the console takes the commands). Check that *Controller Vibration* is
+>   on in the XMB settings.
 
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
@@ -128,7 +152,7 @@ original):
 
 ## Installation
 
-1. Install `re3-ps3-1.3-alpha.pkg` on a PS3 with homebrew support (CFW or
+1. Install `re3-ps3-1.4-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **re3**.
 2. The PKG creates `/dev_hdd0/game/RE3PS3000/USRDIR` with these empty
@@ -218,7 +242,7 @@ On Linux or WSL (Ubuntu):
    make -C ps3 verify
    ```
 
-   The result is `ps3/re3-ps3-1.3-alpha.pkg`.
+   The result is `ps3/re3-ps3-1.4-alpha.pkg`.
 
 Other targets: `make -C ps3 DEBUG=1` (debug build with asserts),
 `make -C ps3 STAGE=1` (headless test build: loads the game without video,
