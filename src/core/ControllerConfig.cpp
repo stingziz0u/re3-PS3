@@ -2,6 +2,9 @@
 #include "common.h"
 #include "platform.h"
 #include "crossplatform.h"
+#ifdef __PS3__
+#include "ps3_platform.h"
+#endif
 #include "ControllerConfig.h"
 #include "Pad.h"
 #include "FileMgr.h"
@@ -779,12 +782,24 @@ void CControllerConfigManager::AffectControllerStateOn_ButtonDown_Driving(int32 
 		state.LeftShock = 255;
 	if (button == GetControllerKeyAssociatedWithAction(VEHICLE_HANDBRAKE, type))
 		state.RightShoulder1 = 255;
+#ifdef __PS3__
+	// Pressure-sensitive accelerator and brake, as on the PS2: the DS3 says
+	// how hard the bound button is pressed (255 for a pad or button without
+	// a sensor). The vehicles read GetAccelerate()/GetBrake() as 0..255.
+	if (button == GetControllerKeyAssociatedWithAction(VEHICLE_ACCELERATE, type))
+		state.Cross = type == JOYSTICK ? PS3_PadPressure(button) : 255;
+	if (button == GetControllerKeyAssociatedWithAction(VEHICLE_CHANGE_RADIO_STATION, type))
+		state.LeftShoulder1 = 255;
+	if (button == GetControllerKeyAssociatedWithAction(VEHICLE_BRAKE, type))
+		state.Square = type == JOYSTICK ? PS3_PadPressure(button) : 255;
+#else
 	if (button == GetControllerKeyAssociatedWithAction(VEHICLE_ACCELERATE, type))
 		state.Cross = 255;
 	if (button == GetControllerKeyAssociatedWithAction(VEHICLE_CHANGE_RADIO_STATION, type))
 		state.LeftShoulder1 = 255;
 	if (button == GetControllerKeyAssociatedWithAction(VEHICLE_BRAKE, type))
 		state.Square = 255;
+#endif
 	if (button == GetControllerKeyAssociatedWithAction(TOGGLE_SUBMISSIONS, type))
 		state.RightShock = 255;
 	

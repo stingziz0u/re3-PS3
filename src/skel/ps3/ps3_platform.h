@@ -50,6 +50,7 @@ const char *PS3_ModsOpenPath(const char *abspath);	// a loose file opened for re
 unsigned PS3_PadButtons(void);	// raw DS3 buttons, bit n = GLFW_GAMEPAD_BUTTON_n
 void PS3_PadRumble(int large);	// large motor 0..255 (0 = still)
 float PS3_PadDeadzone(bool right);	// stick dead zone, 0.05..0.5 (Gamepad settings)
+int PS3_PadPressure(int button);	// how hard a held button is pressed, 1..255 (game button id 1..16)
 
 // ps3.cpp
 unsigned PS3_FreeUserMemMB(void);

@@ -32,6 +32,10 @@ static int nopad;
 
 static unsigned char buttons[15];
 static float axes[6];
+// Pressure of each button, by the game's button id (ControllerConfig.cpp
+// MapIdToButtonId: 1 circle, 2 cross, 3 square, 4 triangle, 5 L2, 6 R2,
+// 7 L1, 8 R1, 13..16 d-pad up/right/down/left); 0 = no pressure sensor.
+static unsigned char pressure[17];
 
 // Gamepad settings > STICK SETTINGS: dead zones, percent / 5, 1..14 = 5%..70%,
 // 6 = 30% (the 0.3 the game always had). An axis under it reads as centred;
@@ -274,6 +278,33 @@ PS3_PadPoll(void)
 	axes[GLFW_GAMEPAD_AXIS_RIGHT_Y] = Stick(data.ANA_R_V);
 	axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] = Trigger(data.BTN_L2, data.PRE_L2);
 	axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] = Trigger(data.BTN_R2, data.PRE_R2);
+
+	pressure[1] = data.PRE_CIRCLE;
+	pressure[2] = data.PRE_CROSS;
+	pressure[3] = data.PRE_SQUARE;
+	pressure[4] = data.PRE_TRIANGLE;
+	pressure[5] = data.PRE_L2;
+	pressure[6] = data.PRE_R2;
+	pressure[7] = data.PRE_L1;
+	pressure[8] = data.PRE_R1;
+	pressure[13] = data.PRE_UP;
+	pressure[14] = data.PRE_RIGHT;
+	pressure[15] = data.PRE_DOWN;
+	pressure[16] = data.PRE_LEFT;
+}
+
+// How hard a held button is pressed, 1..255, by the game's button id: the
+// accelerator and the brake of the PS2 games (ControllerConfig.cpp). Buttons
+// without a sensor (select, start, L3, R3) and pads that don't report
+// pressure (0 while the button is down) read 255, as before. The DS3's
+// sensors rarely reach 255: the top eighth of the travel counts as full.
+int
+PS3_PadPressure(int button)
+{
+	if (button < 1 || button > 16 || pressure[button] == 0)
+		return 255;
+	int p = pressure[button] * 255 / 224;
+	return p > 255 ? 255 : p;
 }
 
 // Raw DS3 buttons of the last poll, bit n = GLFW_GAMEPAD_BUTTON_n

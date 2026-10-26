@@ -642,8 +642,15 @@ CControllerState CPad::ReconcileTwoControllersInput(CControllerState const &Stat
 
 	ReconState.Clear();
 
+#ifdef __PS3__
+	// the stronger of the two, not 255: keeps the DS3's pressure on the
+	// accelerator and the brake (ControllerConfig.cpp); a plain press is 255
+#define _RECONCILE_BUTTON(button) \
+	{ if ( State1.button || State2.button ) ReconState.button = Max(State1.button, State2.button); }
+#else
 #define _RECONCILE_BUTTON(button) \
 	{ if ( State1.button || State2.button ) ReconState.button = 255; }
+#endif
 
 #define _RECONCILE_AXIS_POSITIVE(axis) \
 	{ if ( State1.axis >= 0 && State2.axis >= 0 ) ReconState.axis = Max(State1.axis, State2.axis); }
