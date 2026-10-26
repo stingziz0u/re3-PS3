@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.4 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.4.1 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, and the game has been played to 100% on a real PS3. Expect
 > bugs anyway and please report them with the log (see
@@ -38,7 +38,8 @@ PlayStation button icons and the controller picture of the settings page).
   200% in steps of 5 and stick dead zones, 5% to 70% (30% the game's
   own; the right one is also where the camera starts turning), in
   *Controller setup > Gamepad settings > Stick settings*; vibration in
-  *Gamepad settings*. PlayStation buttons in the
+  *Gamepad settings*. Pressure-sensitive accelerator and brake, as on the
+  PS2 (DualShock 3). PlayStation buttons in the
   on-screen help.
 - **Aiming: III / Vice City** (*Controller setup > Gamepad settings*): with
   Vice City, the camera when you lock on with a gun is Vice City's: it looks
@@ -102,7 +103,7 @@ original):
 
 ## Installation
 
-1. Install `re3-ps3-1.4-alpha.pkg` on a PS3 with homebrew support (CFW or
+1. Install `re3-ps3-1.4.1-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **re3**.
 2. The PKG creates `/dev_hdd0/game/RE3PS3000/USRDIR` with these empty
@@ -192,7 +193,7 @@ On Linux or WSL (Ubuntu):
    make -C ps3 verify
    ```
 
-   The result is `ps3/re3-ps3-1.4-alpha.pkg`.
+   The result is `ps3/re3-ps3-1.4.1-alpha.pkg`.
 
 Other targets: `make -C ps3 DEBUG=1` (debug build with asserts),
 `make -C ps3 STAGE=1` (headless test build: loads the game without video,
