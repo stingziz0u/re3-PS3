@@ -289,7 +289,10 @@ $(OBJDIR)/vendor/librw/src/ps3/ps3vmx.o: VMX_FLAGS := -maltivec
 $(OBJDIR)/src/%.o: $(SRC)/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) -c $< -o $@
+	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) $(VMX_FLAGS) -c $< -o $@
+
+# the collision broadphase with AltiVec (only that file; from res-PS3)
+$(OBJDIR)/src/collision/ColVmx.o: VMX_FLAGS := -maltivec
 
 # the SPU mixer program, and the object that carries it
 $(SPU_ELF): $(CURDIR)/spu/spumix.c $(CURDIR)/spu/spumix.h $(CURDIR)/Makefile

@@ -5,7 +5,27 @@
 
 #ifdef __PS3__
 // patch 53: the bytes of the triangle planes, for the [col] log line
+#include <malloc.h>
 uint32 PS3_colPlaneBytes;
+
+// from res-PS3 (patch 62): with the planes, each triangle's bounding box, by
+// axis (min x of every triangle, then min y... max z; 4 at a time for
+// AltiVec, the padding boxes empty), after the link pointer's slot:
+// Collision.cpp's broadphase
+static size_t
+PS3_PlaneBytes(int numTriangles)
+{
+	int n4 = (numTriangles + 3) & ~3;
+	size_t planes = (sizeof(CColTrianglePlane) * (numTriangles + 1) + sizeof(void*) + 15) & ~(size_t)15;
+	return planes + 6 * n4 * sizeof(float);
+}
+
+const float*
+PS3_TriBoxes(const CColModel *m)
+{
+	size_t planes = (sizeof(CColTrianglePlane) * (m->numTriangles + 1) + sizeof(void*) + 15) & ~(size_t)15;
+	return (const float*)((const uint8*)m->trianglePlanes + planes);
+}
 #endif
 
 CColModel::CColModel(void)
@@ -56,15 +76,46 @@ CColModel::CalculateTrianglePlanes(void)
 {
 	PUSH_MEMID(MEMID_COLLISION);
 
+#ifdef __PS3__
+	// from res-PS3 (patch 62): one block, 16-byte aligned: the planes, the
+	// link pointer's slot, the triangles' boxes
+	trianglePlanes = (CColTrianglePlane*)memalign(16, PS3_PlaneBytes(numTriangles));
+	REGISTER_MEMPTR(&trianglePlanes);
+	if(trianglePlanes == nil){
+		POP_MEMID();
+		return;
+	}
+	PS3_colPlaneBytes += PS3_PlaneBytes(numTriangles);
+	for(int i = 0; i < numTriangles; i++)
+		trianglePlanes[i].Set(vertices, triangles[i]);
+	{
+		int n4 = (numTriangles + 3) & ~3;
+		float *b = (float*)PS3_TriBoxes(this);
+		for(int i = 0; i < n4; i++){
+			if(i < numTriangles){
+				CVector va = vertices[triangles[i].a].Get();
+				CVector vb = vertices[triangles[i].b].Get();
+				CVector vc = vertices[triangles[i].c].Get();
+				b[0*n4 + i] = Min(va.x, Min(vb.x, vc.x));
+				b[1*n4 + i] = Min(va.y, Min(vb.y, vc.y));
+				b[2*n4 + i] = Min(va.z, Min(vb.z, vc.z));
+				b[3*n4 + i] = Max(va.x, Max(vb.x, vc.x));
+				b[4*n4 + i] = Max(va.y, Max(vb.y, vc.y));
+				b[5*n4 + i] = Max(va.z, Max(vb.z, vc.z));
+			}else{
+				// empty: never overlaps
+				b[0*n4 + i] = b[1*n4 + i] = b[2*n4 + i] = 1.0e30f;
+				b[3*n4 + i] = b[4*n4 + i] = b[5*n4 + i] = -1.0e30f;
+			}
+		}
+	}
+#else
 	// HACK: allocate space for one more element to stuff the link pointer into
 	trianglePlanes = (CColTrianglePlane*)RwMalloc(sizeof(CColTrianglePlane) * (numTriangles+1));
 	REGISTER_MEMPTR(&trianglePlanes);
-#ifdef __PS3__
-	if(trianglePlanes)
-		PS3_colPlaneBytes += sizeof(CColTrianglePlane) * (numTriangles+1);
-#endif
 	for(int i = 0; i < numTriangles; i++)
 		trianglePlanes[i].Set(vertices, triangles[i]);
+#endif
 
 	POP_MEMID();
 }
@@ -74,9 +125,11 @@ CColModel::RemoveTrianglePlanes(void)
 {
 #ifdef __PS3__
 	if(trianglePlanes)
-		PS3_colPlaneBytes -= sizeof(CColTrianglePlane) * (numTriangles+1);
-#endif
+		PS3_colPlaneBytes -= PS3_PlaneBytes(numTriangles);
+	free(trianglePlanes);	// memalign'd (from res-PS3, patch 62)
+#else
 	RwFree(trianglePlanes);
+#endif
 	trianglePlanes = nil;
 }
 
