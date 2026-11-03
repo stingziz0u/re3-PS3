@@ -163,6 +163,15 @@ LIBRW_OBJS := $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(LIBRW_SRCS))
 GAME_OBJS  := $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(GAME_SRCS) $(PS3_SRCS)) \
               $(OBJDIR)/GitSHA1.o
 
+# the audio mixer's SPU program (ps3/spu/spumix.c, from res-PS3), built with
+# spu-gcc and put in the EBOOT as the symbol spumix_elf (sampman_ps3.cpp)
+SPU_CC  := $(PS3DEV)/spu/bin/spu-gcc
+SPU_ELF := $(OBJDIR)/spu/spumix.elf
+SPU_OBJ := $(OBJDIR)/spu/spumix_elf.o
+ifneq ($(STAGE),1)
+  GAME_OBJS += $(SPU_OBJ)
+endif
+
 ELF := $(OBJDIR)/$(TARGET).elf
 
 # Diagnostics (FTRACE=1): the code where crashes are most likely is built
@@ -277,6 +286,16 @@ $(OBJDIR)/src/%.o: $(SRC)/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
 	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) -c $< -o $@
+
+# the SPU mixer program, and the object that carries it
+$(SPU_ELF): $(CURDIR)/spu/spumix.c $(CURDIR)/spu/spumix.h $(CURDIR)/Makefile
+	@mkdir -p $(dir $@)
+	@echo "SPU ps3/spu/spumix.c"
+	@$(SPU_CC) -O2 -Wall -mdual-nops -fmodulo-sched -I$(PSL1GHT)/spu/include $< -L$(PSL1GHT)/spu/lib -lsputhread -o $@
+
+$(SPU_OBJ): $(SPU_ELF)
+	@printf '\t.section .rodata\n\t.align 7\n\t.global spumix_elf\nspumix_elf:\n\t.incbin "%s"\n\t.global spumix_elf_end\nspumix_elf_end:\n' '$<' > $(@:.o=.S)
+	@$(AS) $(@:.o=.S) -o $@
 
 # Which patch level the tree and the built PKG are at
 verify:

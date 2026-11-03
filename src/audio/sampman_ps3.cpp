@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -30,6 +31,7 @@
 #include <sys/thread.h>
 #include <sys/mutex.h>
 #include <sys/event_queue.h>
+#include <sys/spu.h>
 #include <audio/audio.h>
 
 #include "sampman.h"
@@ -44,6 +46,7 @@
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_NO_SIMD
 #include "minimp3.h"
+#include "../../ps3/spu/spumix.h"	// patch 49: the SPU mixer job
 
 cSampleManager SampleManager;
 bool _bSampmanInitialised = false;
@@ -52,6 +55,12 @@ uint32 BankStartOffset[MAX_SFX_BANKS];
 uint32 nNumMP3s;
 int defaultProvider = 0;
 
+// patch 49: the mixer on an SPU (SpuMix* below). gPS3SpuAudio: perf.txt
+// switches it between runs; nospuaudio.txt in USRDIR turns it off. The PPU
+// mixer stays as the fallback. gPS3SpuWaitUs: the mixer thread's wait for the
+// SPU (inside gPS3MixerBusyUs, but the PPU is free meanwhile)
+bool gPS3SpuAudio = true;
+uint64 gPS3SpuWaitUs;
 static char SampleBankDescFilename[] = "audio/sfx.SDT";
 static char SampleBankDataFilename[] = "audio/sfx.RAW";
 
@@ -590,6 +599,11 @@ struct Stream
 };
 
 static Stream *streams[MAX_STREAMS];
+// a stream change asked for and not done yet: the mixer leaves the old
+// stream out (no mixer lock on the game thread: it waited for the block
+// being mixed)
+static volatile bool streamHold[MAX_STREAMS];
+static void StreamRequestsProcess(void);	// the stream thread (below)
 
 static Stream*
 StreamCreate(const char *filename)
@@ -606,7 +620,7 @@ StreamCreate(const char *filename)
 	s->dec = d;
 	s->rate = d->GetRate();
 	s->lengthMs = d->GetLengthMS();
-	s->ring = new int16[RING_FRAMES*2];
+	s->ring = (int16*)memalign(128, RING_FRAMES*2*sizeof(int16));	// patch 49: the SPU reads it by DMA
 	s->volume = 0;
 	s->pan = 63;
 	return s;
@@ -617,8 +631,53 @@ StreamDestroy(Stream *s)
 {
 	if(s == nil) return;
 	delete s->dec;
-	delete[] s->ring;
+	free(s->ring);
 	delete s;
+}
+
+// ---- stream changes on the stream thread (from res-PS3, patches 69/72) ----
+// A radio station, track or mission audio change opened the file, read its
+// headers, seeked into it and swapped it in on the game thread, waiting for
+// the stream thread's lock too (14.6 ms in a frame in reLCS). Now
+// PreloadStreamedFile, StartStreamedFile and StopStreamedFile leave a
+// request here and return; the stream thread opens the file and swaps it in
+// (within ~10 ms). Until then the game sees the stream as asked for: playing,
+// at the asked position, and the old one is left out of the mix. The MP3
+// player (user tracks) stays as it was. USRDIR/nostreamasync.txt: on the
+// game thread, as before.
+struct StreamReq {
+	volatile uint32 seq;	// bumped by every request of the game thread
+	volatile uint32 doneSeq;	// the last one the stream thread finished
+	int32 file;		// -1: no stream (stop)
+	uint32 pos;
+	int32 loops;
+	bool playing, paused;
+};
+static StreamReq streamReqs[MAX_STREAMS];
+static sys_mutex_t reqMutex;
+static bool gStreamAsync;	// set once the stream thread runs
+static uint8 nStreamEffect[MAX_STREAMS];	// the last SetStreamedVolumeAndPan's effect flag
+static uint8 gStreamMaster[5];	// and the master volumes it used (fx fade, fx, music fade, music)
+uint32 gPS3StreamChanges, gPS3StreamChangeUs;	// done on the stream thread, and the time they took there
+
+struct ReqLock {
+	ReqLock() { sysMutexLock(reqMutex, 0); }
+	~ReqLock() { sysMutexUnlock(reqMutex); }
+};
+
+static inline bool
+StreamPending(uint8 n)
+{
+	return gStreamAsync && streamReqs[n].seq != streamReqs[n].doneSeq;
+}
+
+static bool
+AnyStreamPending(void)
+{
+	for(int i = 0; i < MAX_STREAMS; i++)
+		if(StreamPending(i))
+			return true;
+	return false;
 }
 
 // ============================================================================
@@ -736,13 +795,14 @@ static uint32 s_badFreq;
 static double s_badPos;
 static int32 s_badLen;
 
-static void
-MixChannel(Channel &c)
+// the gains of a channel and its step; false: not mixed this block (stopped
+// when its frequency or position went wild)
+static bool
+ChannelSetup(Channel &c, float &gl, float &gr, double &step)
 {
 	if(c.data == nil || c.length == 0 || c.freq == 0)
-		return;
+		return false;
 	// gains
-	float gl, gr;
 	float vol = c.volume / 127.0f;
 	if(c.is3D){
 		float d = sqrtf(c.x*c.x + c.y*c.y + c.z*c.z);
@@ -768,11 +828,9 @@ MixChannel(Channel &c)
 	gl *= vol * (1.0f/32768.0f);
 	gr *= vol * (1.0f/32768.0f);
 
-	double step = (double)c.freq / OUT_RATE;
+	step = (double)c.freq / OUT_RATE;
 	double pos = c.pos;
-	const int16 *data = c.data;
 	int32 len = c.length;
-	float *out = mixBuf;
 	if(!(step > 0.0 && step < 16.0) || !(pos >= 0.0 && pos < 1.0e9)){
 		// a frequency or position gone wild (a NaN of the game's maths):
 		// the channel stops instead of reading outside its sample (logged
@@ -785,10 +843,24 @@ MixChannel(Channel &c)
 			s_badChannelLog = 1;
 		}
 		c.playing = false;
-		return;
+		return false;
 	}
 	if(!(gl == gl) || !(gr == gr))
 		gl = gr = 0.0f;	// NaN position or volume: silent, not noise
+	return true;
+}
+
+static void
+MixChannel(Channel &c)
+{
+	float gl, gr;
+	double step;
+	if(!ChannelSetup(c, gl, gr, step))
+		return;
+	double pos = c.pos;
+	const int16 *data = c.data;
+	int32 len = c.length;
+	float *out = mixBuf;
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
 		int32 end = (c.loopEnd < 0 || c.loopEnd > len) ? len : c.loopEnd;
 		bool looping = c.loopCount == 0 || c.timesPlayed + 1 < c.loopCount;
@@ -819,17 +891,27 @@ MixChannel(Channel &c)
 	c.pos = pos;
 }
 
+static bool
+StreamSetup(Stream &s, float &gl, float &gr, double &step)
+{
+	if(!s.playing || s.paused || s.ring == nil)
+		return false;
+	float vol = s.volume / 127.0f * (1.0f/32768.0f);
+	gl = s.pan <= 63 ? 1.0f : (127 - s.pan) / 64.0f;
+	gr = s.pan >= 63 ? 1.0f : s.pan / 63.0f;
+	gl *= vol;
+	gr *= vol;
+	step = (double)s.rate / OUT_RATE;
+	return true;
+}
+
 static void
 MixStream(Stream &s)
 {
-	if(!s.playing || s.paused || s.ring == nil)
+	float gl, gr;
+	double step;
+	if(!StreamSetup(s, gl, gr, step))
 		return;
-	float vol = s.volume / 127.0f * (1.0f/32768.0f);
-	float gl = s.pan <= 63 ? 1.0f : (127 - s.pan) / 64.0f;
-	float gr = s.pan >= 63 ? 1.0f : s.pan / 63.0f;
-	gl *= vol;
-	gr *= vol;
-	double step = (double)s.rate / OUT_RATE;
 	float *out = mixBuf;
 	for(int i = 0; i < AUDIO_BLOCK_SAMPLES; i++){
 		uint32 avail = s.head - s.tail;
@@ -859,19 +941,274 @@ AudioBlock(u32 index)
 		(u64)index * AUDIO_BLOCK_SAMPLES * audioCfg.channelCount;
 }
 
+// ============================================================================
+// patch 49: the mixer on an SPU (ps3/spu/spumix.c)
+// ============================================================================
+// The mixer thread fills a job with every channel and stream to mix (gains
+// and validity worked out here, as MixChannel/MixStream do), writes its
+// address to the SPU's signal 1 and sleeps on the event queue until the SPU
+// has mixed it: the PPU is free for the game meanwhile. The mixer lock is held
+// the whole time, as when the PPU mixed. A channel or stream the SPU can't
+// read (a sample at an odd address, a ring not 16-byte aligned) is mixed
+// here while the SPU works. If the SPU doesn't answer in 100 ms the PPU mixes
+// from then on.
+
+extern "C" const u8 spumix_elf[];	// the SPU program (Makefile: obj/.../spumix.elf, .incbin)
+
+static SpuMixJob spuJob __attribute__((aligned(128)));
+static float spuOut[AUDIO_BLOCK_SAMPLES*OUT_CHANNELS] __attribute__((aligned(128)));
+static int16 spuChanOf[SPUMIX_MAX_CHANNELS];	// job channel -> channels[]
+static int8 spuStreamOf[SPUMIX_MAX_STREAMS];
+static bool spuReady;
+static sysSpuImage spuImage;
+static sys_spu_group_t spuGroup;
+static sys_spu_thread_t spuThread;
+static sys_event_queue_t spuQueue;
+static uint32 spuBlocks, spuPpuLeftovers;
+
+static_assert(sizeof(SpuMixChannel) == 64, "SpuMixChannel layout");
+static_assert(sizeof(SpuMixStream) == 48, "SpuMixStream layout");
+static_assert(sizeof(SpuMixJob) % 128 == 0 && sizeof(SpuMixJob) <= 16384, "SpuMixJob: one DMA");
+static_assert(MAXCHANNELS+MAX2DCHANNELS <= SPUMIX_MAX_CHANNELS && MAX_STREAMS <= SPUMIX_MAX_STREAMS, "SPU job size");
+static_assert(AUDIO_BLOCK_SAMPLES == SPUMIX_BLOCK, "SPU block size");
+
+// the names of the SPU attributes are 32-bit pointers (ATTRIBUTE_PRXPTR)
+static void
+SetPrxPtr(void *field, size_t size, const char *p)
+{
+	u32 ea = (u32)(uintptr_t)p;
+	if(size == 4)
+		memcpy(field, &ea, 4);
+	else{
+		u64 ea64 = (uintptr_t)p;
+		memcpy(field, &ea64, 8);
+	}
+}
+
+static void
+SpuMixInit(void)
+{
+	FILE *f = fopen(PS3_USRDIR "/nospuaudio.txt", "rb");
+	if(f){
+		fclose(f);
+		gPS3SpuAudio = false;
+		PS3_Log("[spu] nospuaudio.txt: the audio mixer stays on the PPU");
+		return;
+	}
+	s32 r = sysSpuInitialize(6, 0);
+	if(r != 0)
+		PS3_Logf("[spu] sysSpuInitialize: %08x (already done: going on)", (unsigned)r);
+	r = sysSpuImageImport(&spuImage, spumix_elf, 0);
+	if(r != 0){
+		PS3_Logf("[spu] sysSpuImageImport failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		return;
+	}
+	sys_event_queue_attr_t qattr;
+	memset(&qattr, 0, sizeof(qattr));
+	qattr.attr_protocol = SYS_EVENT_QUEUE_FIFO;
+	qattr.type = SYS_EVENT_QUEUE_PPU;
+	strncpy(qattr.name, "re3mix", sizeof(qattr.name));
+	r = sysEventQueueCreate(&spuQueue, &qattr, SYS_EVENT_QUEUE_KEY_LOCAL, 8);
+	if(r != 0){
+		PS3_Logf("[spu] sysEventQueueCreate failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		sysSpuImageClose(&spuImage);
+		return;
+	}
+	static const char groupName[] = "re3mixg";
+	static const char threadName[] = "re3mixt";
+	sysSpuThreadGroupAttribute gattr;
+	memset(&gattr, 0, sizeof(gattr));
+	gattr.nsize = sizeof(groupName);
+	SetPrxPtr(&gattr.name, sizeof(gattr.name), groupName);
+	gattr.type = 0;
+	r = sysSpuThreadGroupCreate(&spuGroup, 1, 100, &gattr);
+	if(r != 0){
+		PS3_Logf("[spu] sysSpuThreadGroupCreate failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		sysEventQueueDestroy(spuQueue, 0);
+		sysSpuImageClose(&spuImage);
+		return;
+	}
+	sysSpuThreadAttribute tattr;
+	memset(&tattr, 0, sizeof(tattr));
+	SetPrxPtr(&tattr.name, sizeof(tattr.name), threadName);
+	tattr.nsize = sizeof(threadName);
+	tattr.option = SPU_THREAD_ATTR_NONE;
+	sysSpuThreadArgument targ;
+	memset(&targ, 0, sizeof(targ));
+	r = sysSpuThreadInitialize(&spuThread, spuGroup, 0, &spuImage, &tattr, &targ);
+	if(r == 0)
+		r = sysSpuThreadSetConfiguration(spuThread, SPU_SIGNAL1_OVERWRITE | SPU_SIGNAL2_OVERWRITE);
+	if(r == 0)
+		r = sysSpuThreadConnectEvent(spuThread, spuQueue, SPU_THREAD_EVENT_USER, SPUMIX_SPUP);
+	if(r == 0)
+		r = sysSpuThreadGroupStart(spuGroup);
+	if(r != 0){
+		PS3_Logf("[spu] SPU thread setup failed (%08x): the audio mixer stays on the PPU", (unsigned)r);
+		sysSpuThreadGroupDestroy(spuGroup);
+		sysEventQueueDestroy(spuQueue, 0);
+		sysSpuImageClose(&spuImage);
+		return;
+	}
+	spuReady = true;
+	PS3_Logf("[spu] audio mixer on SPU thread %08x (job %u bytes at %p)", (unsigned)spuThread,
+	         (unsigned)sizeof(spuJob), &spuJob);
+}
+
+static void
+SpuMixShutdown(void)
+{
+	if(!spuReady)
+		return;
+	spuReady = false;
+	u32 cause, status;
+	sysSpuThreadWriteSignal(spuThread, 0, SPUMIX_QUIT);
+	sysSpuThreadGroupJoin(spuGroup, &cause, &status);
+	sysSpuThreadDisconnectEvent(spuThread, SPU_THREAD_EVENT_USER, SPUMIX_SPUP);
+	sysSpuThreadGroupDestroy(spuGroup);
+	sysEventQueueDestroy(spuQueue, 0);
+	sysSpuImageClose(&spuImage);
+	PS3_Logf("[spu] audio mixer stopped after %u blocks", spuBlocks);
+}
+
+static void
+ToFixed(double v, int32 &i, uint32 &f)
+{
+	i = (int32)v;
+	f = (uint32)((v - i) * 4294967296.0);
+}
+
+// inside the mixer lock: mixes this block on the SPU into spuOut (and what
+// the SPU can't take into mixBuf). false: the SPU didn't answer, nothing was
+// mixed and the positions are as they were (the PPU mixes this block)
+static bool
+SpuMixBlock(void)
+{
+	SpuMixJob &j = spuJob;
+	int nc = 0, ns = 0;
+	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++){
+		Channel &c = channels[i];
+		if(!c.playing)
+			continue;
+		float gl, gr;
+		double step;
+		if(!ChannelSetup(c, gl, gr, step))
+			continue;
+		if(((uintptr_t)c.data & 1) != 0)
+			continue;	// the PPU mixes it below
+		SpuMixChannel &m = j.ch[nc];
+		m.ea = (uint64_t)(uintptr_t)c.data;
+		m.len = c.length;
+		ToFixed(c.pos, m.ipos, m.fpos);
+		int32 is;
+		ToFixed(step, is, m.fstep);
+		m.istep = is;
+		m.loopStart = c.loopStart;
+		m.loopEnd = c.loopEnd;
+		m.loopCount = c.loopCount;
+		m.timesPlayed = c.timesPlayed;
+		m.gl = gl;
+		m.gr = gr;
+		m.flags = SPUMIX_ACTIVE;
+		spuChanOf[nc++] = i;
+	}
+	for(int i = 0; i < MAX_STREAMS; i++){
+		Stream *s = streams[i];
+		if(s == nil || streamHold[i])
+			continue;
+		float gl, gr;
+		double step;
+		if(!StreamSetup(*s, gl, gr, step))
+			continue;
+		if(((uintptr_t)s->ring & 15) != 0)
+			continue;	// the PPU mixes it below
+		SpuMixStream &m = j.st[ns];
+		m.ringEa = (uint64_t)(uintptr_t)s->ring;
+		m.ringFrames = RING_FRAMES;
+		m.head = s->head;
+		m.tail = s->tail;
+		m.ffrac = (uint32)(s->frac * 4294967296.0);
+		int32 is;
+		ToFixed(step, is, m.fstep);
+		m.istep = is;
+		m.gl = gl;
+		m.gr = gr;
+		m.flags = SPUMIX_ACTIVE;
+		spuStreamOf[ns++] = i;
+	}
+	j.outEa = (uint64_t)(uintptr_t)spuOut;
+	j.numChannels = nc;
+	j.numStreams = ns;
+	j.mono = monoMode;
+	j.seq = spuBlocks & 0xFFFFFF;
+
+	sysEventQueueDrain(spuQueue);
+	__asm__ volatile("sync" ::: "memory");
+	if(sysSpuThreadWriteSignal(spuThread, 0, (u32)(uintptr_t)&spuJob) != 0)
+		return false;
+
+	// meanwhile: what the SPU can't read (normally nothing)
+	for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++){
+		Channel &c = channels[i];
+		if(c.playing && ((uintptr_t)c.data & 1) != 0){
+			MixChannel(c);
+			spuPpuLeftovers++;
+		}
+	}
+	for(int i = 0; i < MAX_STREAMS; i++)
+		if(streams[i] && !streamHold[i] && ((uintptr_t)streams[i]->ring & 15) != 0){
+			MixStream(*streams[i]);
+			spuPpuLeftovers++;
+		}
+
+	u64 t0 = sysGetSystemTime();
+	sys_event_t ev;
+	s32 r = sysEventQueueReceive(spuQueue, &ev, 100 * 1000);
+	gPS3SpuWaitUs += sysGetSystemTime() - t0;
+	if(r != 0 || (ev.data_2 & 0xFFFFFF) != j.seq){
+		spuReady = false;	// not joined: it may still be running
+		PS3_Logf("[spu] the SPU mixer didn't answer block %u (%08x, event %llx): the PPU mixes from now on",
+		         spuBlocks, (unsigned)r, r == 0 ? (unsigned long long)ev.data_2 : 0ULL);
+		return false;
+	}
+	__asm__ volatile("sync" ::: "memory");
+
+	// the new positions
+	for(int k = 0; k < nc; k++){
+		const SpuMixChannel &m = j.ch[k];
+		Channel &c = channels[spuChanOf[k]];
+		c.pos = m.ipos + m.fpos * (1.0 / 4294967296.0);
+		c.timesPlayed = m.timesPlayed;
+		if(m.flags & SPUMIX_STOPPED)
+			c.playing = false;
+	}
+	for(int k = 0; k < ns; k++){
+		const SpuMixStream &m = j.st[k];
+		Stream &s = *streams[spuStreamOf[k]];
+		s.frac = m.ffrac * (1.0 / 4294967296.0);
+		s.tail = m.tail;
+	}
+	spuBlocks++;
+	return true;
+}
+
 static void
 AudioFill(float *dst)
 {
 	memset(mixBuf, 0, sizeof(mixBuf));
+	bool spu = false;
 	{
 		MixLock lock;
 		s_mixing = 1;
-		for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
-			if(channels[i].playing)
-				MixChannel(channels[i]);
-		for(int i = 0; i < MAX_STREAMS; i++)
-			if(streams[i])
-				MixStream(*streams[i]);
+		if(spuReady && gPS3SpuAudio)
+			spu = SpuMixBlock();
+		if(!spu){
+			for(int i = 0; i < MAXCHANNELS+MAX2DCHANNELS; i++)
+				if(channels[i].playing)
+					MixChannel(channels[i]);
+			for(int i = 0; i < MAX_STREAMS; i++)
+				if(streams[i] && !streamHold[i])
+					MixStream(*streams[i]);
+		}
 		s_mixing = 0;
 	}
 	s_mixBlocks++;
@@ -882,11 +1219,26 @@ AudioFill(float *dst)
 		}
 		s_badChannelLog = 0;
 	}
-	for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
-		float v = mixBuf[i];
-		if(v > 1.0f) v = 1.0f;
-		if(v < -1.0f) v = -1.0f;
-		dst[i] = v;
+	static int leftoversLogged;
+	if(spuPpuLeftovers && leftoversLogged < 4){
+		leftoversLogged++;
+		PS3_Logf("[spu] %u channel/stream blocks the SPU couldn't read were mixed on the PPU", spuPpuLeftovers);
+		spuPpuLeftovers = 0;
+	}
+	if(spu){
+		for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
+			float v = mixBuf[i] + spuOut[i];
+			if(v > 1.0f) v = 1.0f;
+			if(v < -1.0f) v = -1.0f;
+			dst[i] = v;
+		}
+	}else{
+		for(int i = 0; i < AUDIO_BLOCK_SAMPLES*OUT_CHANNELS; i++){
+			float v = mixBuf[i];
+			if(v > 1.0f) v = 1.0f;
+			if(v < -1.0f) v = -1.0f;
+			dst[i] = v;
+		}
 	}
 }
 
@@ -931,6 +1283,7 @@ StreamThread(void *arg)
 		s_streamPasses++;
 		s_streamStep = 1;
 		PedCommentRead();
+		StreamRequestsProcess();	// res-PS3 patch 69
 		s_streamStep = 2;
 		{
 			for(int i = 0; i < MAX_STREAMS; i++){
@@ -965,7 +1318,7 @@ StreamThread(void *arg)
 		}
 		s_streamStep = 3;
 		// sooner when a ped comment waits
-		for(int w = 0; w < 4 && pcRequest < 0 && !s_audioQuit; w++)
+		for(int w = 0; w < 4 && pcRequest < 0 && !AnyStreamPending() && !s_audioQuit; w++)
 			usleep(2000);
 		s_streamStep = 0;
 	}
@@ -1028,6 +1381,7 @@ AudioPortInit(void)
 
 	s_audioQuit = false;
 	audioLate = 0;
+	SpuMixInit();	// res-PS3 patch 49
 	audioPortStart(audioPort);
 
 	if(sysThreadCreate(&audioTid, AudioThread, NULL, 200, 64*1024, THREAD_JOINABLE, (char*)"re3audio") != 0){
@@ -1041,6 +1395,14 @@ AudioPortInit(void)
 	}
 	if(sysThreadCreate(&streamTid, StreamThread, NULL, 900, 128*1024, THREAD_JOINABLE, (char*)"re3stream") != 0){
 		PS3_Log("[audio] sysThreadCreate failed (streams)");
+	}else{
+		// res-PS3 patch 69: radio, music and mission audio changes on the stream thread
+		FILE *na = fopen(PS3_USRDIR "/nostreamasync.txt", "rb");
+		if(na)
+			fclose(na);
+		gStreamAsync = na == nil;
+		PS3_Logf("[audio] stream changes: %s", gStreamAsync ? "on the stream thread (nostreamasync.txt turns it off)" :
+		         "on the game thread (nostreamasync.txt)");
 	}
 	audioOpen = true;
 	PS3_Logf("[audio] port %u open: %u blocks, %u channels, %d Hz",
@@ -1057,6 +1419,7 @@ AudioPortShutdown(void)
 	s_audioQuit = true;
 	sysThreadJoin(audioTid, &rv);
 	sysThreadJoin(streamTid, &rv);
+	SpuMixShutdown();	// patch 49
 	audioPortStop(audioPort);
 	audioRemoveNotifyEventQueue(audioKey);
 	audioPortClose(audioPort);
@@ -1142,6 +1505,7 @@ cSampleManager::Initialise(void)
 
 	CreateMutex(&mixMutex, "re3mix");
 	CreateMutex(&streamMutex, "re3strm");
+	CreateMutex(&reqMutex, "re3req");	// res-PS3 patch 69
 
 	for(int32 i = 0; i < TOTAL_AUDIO_SAMPLES; i++){
 		m_aSamples[i].nOffset = 0;
@@ -1674,24 +2038,126 @@ ApplyStreamVolume(cSampleManager *sm, uint8 nStream, uint8 nEffectFlag, uint8 fx
 	s->pan = nStreamPan[nStream];
 }
 
+
+// game thread: a stream change for the stream thread
+static void
+StreamRequest(uint8 n, int32 file, uint32 pos, int32 loops, bool playing)
+{
+	ReqLock rl;
+	StreamReq &r = streamReqs[n];
+	r.file = file;
+	r.pos = pos;
+	r.loops = loops;
+	r.playing = playing;
+	r.paused = false;
+	// the old stream out of the mix until the change is done; set with the
+	// request lock held, so the stream thread can't clear it before
+	streamHold[n] = true;
+	__asm__ volatile("lwsync" ::: "memory");
+	r.seq++;
+}
+
+// game thread, before a change done right here (the MP3 player): a request
+// still pending is dropped
+static void
+StreamCancel(uint8 n)
+{
+	if(!gStreamAsync)
+		return;
+	ReqLock rl;
+	streamReqs[n].seq++;
+	streamReqs[n].doneSeq = streamReqs[n].seq;
+	streamHold[n] = false;
+}
+
+// stream thread: the changes asked for
+static void
+StreamRequestsProcess(void)
+{
+	for(int n = 0; n < MAX_STREAMS; n++){
+		if(!StreamPending(n))
+			continue;
+		uint64 t0 = sysGetSystemTime();
+		StreamReq r;
+		uint32 mySeq;
+		{
+			ReqLock rl;
+			mySeq = streamReqs[n].seq;
+			r = streamReqs[n];
+		}
+		__asm__ volatile("lwsync" ::: "memory");
+		Stream *s = nil;
+		if(r.file >= 0){
+			s = StreamCreate(StreamedNameTable[r.file]);
+			if(s){
+				uint32 pos = r.pos;
+				if(pos){
+					if(s->lengthMs && pos >= s->lengthMs)
+						pos = 0;
+					s->dec->Seek(pos);
+					s->startMs = pos;
+				}
+				s->pan = nStreamPan[n];
+			}
+		}
+		Stream *old = nil;
+		{
+			// the stream and mixer locks first, the request lock last and
+			// only for the swap: the game thread's requests don't wait for
+			// the mixer through it
+			StreamLock slock;
+			MixLock lock;
+			ReqLock rl;
+			StreamReq &q = streamReqs[n];
+			if(q.seq != mySeq){
+				// asked for something else meanwhile: that one next pass
+				old = s;
+			}else{
+				if(s){
+					s->playing = q.playing;	// StartPreloadedStreamedFile may have come since
+					s->paused = q.paused;
+				}
+				old = streams[n];
+				streams[n] = s;
+				if(s)
+					ApplyStreamVolume(&SampleManager, n, nStreamEffect[n], gStreamMaster[0], gStreamMaster[1],
+					                  gStreamMaster[2], gStreamMaster[3]);
+				q.doneSeq = mySeq;
+				streamHold[n] = false;
+			}
+		}
+		StreamDestroy(old);
+		gPS3StreamChanges++;
+		gPS3StreamChangeUs += (uint32)(sysGetSystemTime() - t0);
+	}
+}
+
 void
 cSampleManager::PreloadStreamedFile(uint8 nFile, uint8 nStream)
 {
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return;
+	if(nStream == 0)
+		mp3Active = false;
+	if(gStreamAsync){
+		StreamRequest(nStream, nFile, 0, 1, false);
+		return;
+	}
 	Stream *s = StreamCreate(StreamedNameTable[nFile]);
 	if(s){
 		s->volume = 0;
 		s->pan = 63;
 	}
-	if(nStream == 0)
-		mp3Active = false;
 	ReplaceStream(nStream, s);
 }
 
 void
 cSampleManager::PauseStream(uint8 nPauseFlag, uint8 nStream)
 {
+	if(nStream < MAX_STREAMS && StreamPending(nStream)){
+		ReqLock rl;
+		streamReqs[nStream].paused = nPauseFlag != 0;
+	}
 	MixLock lock;
 	if(nStream < MAX_STREAMS && streams[nStream])
 		streams[nStream]->paused = nPauseFlag != 0;
@@ -1700,6 +2166,11 @@ cSampleManager::PauseStream(uint8 nPauseFlag, uint8 nStream)
 void
 cSampleManager::StartPreloadedStreamedFile(uint8 nStream)
 {
+	if(nStream < MAX_STREAMS && StreamPending(nStream)){
+		ReqLock rl;
+		streamReqs[nStream].playing = true;
+		return;
+	}
 	MixLock lock;
 	if(nStream < MAX_STREAMS && streams[nStream])
 		streams[nStream]->playing = true;
@@ -1711,6 +2182,7 @@ cSampleManager::StartStreamedFile(uint8 nFile, uint32 nPos, uint8 nStream)
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return false;
 	if(nFile == STREAMED_SOUND_RADIO_MP3_PLAYER){
+		StreamCancel(nStream);	// patch 69: done right here
 		// sampman_oal: started again while one plays (it ended) = the next
 		// file; else the file and position of nPos in the station
 		for(uint32 tries = 0; tries < nNumMP3s; tries++){
@@ -1750,6 +2222,10 @@ cSampleManager::StartStreamedFile(uint8 nFile, uint32 nPos, uint8 nStream)
 	}
 	if(nStream == 0)
 		mp3Active = false;
+	if(gStreamAsync){
+		StreamRequest(nStream, nFile, nPos, 1, true);
+		return true;
+	}
 	Stream *s = StreamCreate(StreamedNameTable[nFile]);
 	if(s == nil){
 		ReplaceStream(nStream, nil);
@@ -1771,8 +2247,12 @@ cSampleManager::StartStreamedFile(uint8 nFile, uint32 nPos, uint8 nStream)
 void
 cSampleManager::StopStreamedFile(uint8 nStream)
 {
-	if(nStream < MAX_STREAMS)
-		ReplaceStream(nStream, nil);
+	if(nStream < MAX_STREAMS){
+		if(gStreamAsync)
+			StreamRequest(nStream, -1, 0, 1, false);
+		else
+			ReplaceStream(nStream, nil);
+	}
 	if(nStream == 0)
 		mp3Active = false;
 }
@@ -1780,6 +2260,8 @@ cSampleManager::StopStreamedFile(uint8 nStream)
 int32
 cSampleManager::GetStreamedFilePosition(uint8 nStream)
 {
+	if(nStream < MAX_STREAMS && StreamPending(nStream))
+		return streamReqs[nStream].file >= 0 ? streamReqs[nStream].pos : 0;	// as asked for
 	MixLock lock;
 	Stream *s = nStream < MAX_STREAMS ? streams[nStream] : nil;
 	if(s == nil || s->rate == 0)
@@ -1799,6 +2281,11 @@ cSampleManager::SetStreamedVolumeAndPan(uint8 nVolume, uint8 nPan, uint8 nEffect
 	if(nPan > MAX_VOLUME) nPan = MAX_VOLUME;
 	nStreamVolume[nStream] = nVolume;
 	nStreamPan[nStream] = nPan;
+	nStreamEffect[nStream] = nEffectFlag;	// for a stream swapped in later
+	gStreamMaster[0] = m_nEffectsFadeVolume;
+	gStreamMaster[1] = m_nEffectsVolume;
+	gStreamMaster[2] = m_nMusicFadeVolume;
+	gStreamMaster[3] = m_nMusicVolume;
 	MixLock lock;
 	ApplyStreamVolume(this, nStream, nEffectFlag, m_nEffectsFadeVolume, m_nEffectsVolume,
 	                  m_nMusicFadeVolume, m_nMusicVolume);
@@ -1813,6 +2300,8 @@ cSampleManager::GetStreamedFileLength(uint8 nStream)
 bool
 cSampleManager::IsStreamPlaying(uint8 nStream)
 {
+	if(nStream < MAX_STREAMS && StreamPending(nStream))
+		return streamReqs[nStream].file >= 0 && streamReqs[nStream].playing;	// as asked for
 	MixLock lock;
 	Stream *s = nStream < MAX_STREAMS ? streams[nStream] : nil;
 	if(s == nil || !s->playing)
