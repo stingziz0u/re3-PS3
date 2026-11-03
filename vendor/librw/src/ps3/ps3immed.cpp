@@ -92,7 +92,6 @@ im2DDrawQuadsAt(uint32 offset, int32 numQuads)
 {
 	if(numQuads <= 0)
 		return;
-	RW_CRUMB("rw: Im2D quads from the ring", numQuads);
 	vertexCacheTouched();
 	bindImmediateAttribs(offset, sizeof(Im2DVertex), 4,
 	                     offsetof(Im2DVertex, r), offsetof(Im2DVertex, u));
