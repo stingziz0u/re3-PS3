@@ -47,6 +47,22 @@ CSprite::CalcScreenCoors(const RwV3d &in, RwV3d *out, float *outw, float *outh, 
 	return true;
 }
 
+#ifdef __PS3__
+// from res-PS3 (patch 50): CalcScreenCoors' w and h at a distance of 1 (they
+// go as 1/z), for the SPU that builds the particles (Particle.cpp)
+void
+PS3_SpriteScreenScale(float *kw, float *kh)
+{
+	float fovScale = DefaultFOV / CDraw::GetFOV();
+#ifdef FIX_SPRITES
+	*kw = CDraw::ms_bFixSprites ? (fovScale * SCREEN_HEIGHT) : (fovScale * SCREEN_SCALE_AR(1.0f) * SCREEN_WIDTH);
+#else
+	*kw = fovScale * SCREEN_SCALE_AR(1.0f) * SCREEN_WIDTH;
+#endif
+	*kh = fovScale * SCREEN_HEIGHT;
+}
+#endif
+
 #define SPRITEBUFFERSIZE 64
 static int32 nSpriteBufferIndex;
 static RwIm2DVertex SpriteBufferVerts[SPRITEBUFFERSIZE*6];

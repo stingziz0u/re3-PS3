@@ -161,6 +161,11 @@ extern bool dxtNative;		// DXT textures kept as DXT in VRAM, sampled by the RSX 
 extern bool vmxMips;		// mip levels made with AltiVec (default on; USRDIR/novmx.txt turns it off)
 extern bool texAsync;		// textures converted on a second PPU thread (default on; USRDIR/notexthread.txt turns it off)
 extern bool txdDirect;		// patch 64: true colour PC textures read straight into PS3 rasters (default on; USRDIR/notxddirect.txt turns it off)
+// from res-PS3 (patch 50): space in this frame's vertex ring for vertices
+// written by an SPU (ringAlloc: CPU address, nil when the segment is full;
+// *offset for the draw) and Im2D quads drawn from there (4 Im2DVertex each)
+uint8 *ringAlloc(uint32 size, uint32 *offset);
+void   im2DDrawQuadsAt(uint32 offset, int32 numQuads);
 // texels the texture thread still has to convert (the game's streaming
 // stops loading more in a frame while this is high); 0 in stage 1
 uint32 textureBacklog(void);

@@ -72,6 +72,23 @@ void PS3_AutotestLoaded(void);		// after a load it asked for
 bool PS3_ModsImgEntry(const char *name, unsigned int *offset, unsigned int *size);	// .dir entry (with extension)
 bool PS3_ModsRead(unsigned int sector, void *buffer, unsigned int sectors);	// CdStreamRead on PS3_MODS_IMAGE
 
+// ps3_spu.cpp (from res-PS3, patch 50): an SPU program as a job server
+// (signal 1 = job address, event back with the job's sequence number)
+#include <stdint.h>
+struct PS3SpuTask
+{
+	bool ready;
+	uint8_t port;
+	const char *name;
+	uint32_t image[4];	// sysSpuImage
+	uint32_t group, thread;
+	uint64_t queue;
+};
+bool PS3_SpuTaskStart(PS3SpuTask *t, const void *elf, const char *name, uint8_t port);
+bool PS3_SpuTaskKick(PS3SpuTask *t, uint32_t jobEa);
+bool PS3_SpuTaskWait(PS3SpuTask *t, uint32_t seq, uint32_t timeoutUs, uint64_t *waitUs);	// false: gave up on it
+void PS3_SpuTaskStop(PS3SpuTask *t);
+
 // ps3_carspawn.cpp (L3 + R3)
 void PS3_CarSpawnerPad(void);		// CPad::UpdatePads, after pad 0
 void PS3_CarSpawnerDraw(void);		// CHud::Draw, after the subtitles

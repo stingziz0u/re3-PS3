@@ -86,6 +86,27 @@ im2DRenderPrimitive(PrimitiveType primType, void *vertices, int32 numVertices)
 	drawStats.verts += numVertices;
 }
 
+// from res-PS3 (patch 50): quads already in the ring (ringAlloc), the particles the SPU built
+void
+im2DDrawQuadsAt(uint32 offset, int32 numQuads)
+{
+	if(numQuads <= 0)
+		return;
+	RW_CRUMB("rw: Im2D quads from the ring", numQuads);
+	vertexCacheTouched();
+	bindImmediateAttribs(offset, sizeof(Im2DVertex), 4,
+	                     offsetof(Im2DVertex, r), offsetof(Im2DVertex, u));
+	setVertexProgram(VP_IM2D);
+	setFragmentProgram(FP_SIMPLE);
+	im2DSetXform();
+	if(!flushCache())
+		return;
+	__asm__ volatile("sync" ::: "memory");
+	rsxDrawVertexArray(rsxCtx, GCM_TYPE_QUADS, 0, numQuads*4);
+	countDraw();
+	drawStats.verts += numQuads*4;
+}
+
 void
 im2DRenderIndexedPrimitive(PrimitiveType primType,
 	void *vertices, int32 numVertices,

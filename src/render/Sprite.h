@@ -4,6 +4,13 @@ class CSprite
 {
 	static float m_f2DNearScreenZ;
 	static float m_f2DFarScreenZ;
+#ifdef __PS3__
+public:
+	// the SPU particles (Particle.cpp, from res-PS3): as reVC's
+	static float GetNearScreenZ(void) { return m_f2DNearScreenZ; }
+	static float GetFarScreenZ(void) { return m_f2DFarScreenZ; }
+private:
+#endif
 	static float m_fRecipNearClipPlane;
 	static int32 m_bFlushSpriteBufferSwitchZTest;
 public:

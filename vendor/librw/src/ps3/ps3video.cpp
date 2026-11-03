@@ -413,6 +413,24 @@ ringWrite(const void *data, uint32 size)
 	return ring.offset + at;
 }
 
+// from res-PS3 (patch 50): room for vertices an SPU writes (by DMA, 16-byte aligned); the
+// draw (im2DDrawQuadsAt) invalidates the vertex cache
+uint8*
+ringAlloc(uint32 size, uint32 *offset)
+{
+	if(!ready || ring.ptr == nil || size == 0)
+		return nil;
+	if(ringHead + size > RING_SEG_SIZE){
+		drawStats.dropped++;
+		return nil;
+	}
+	uint32 at = ringSeg*RING_SEG_SIZE + ringHead;
+	ringHead = (ringHead + size + 127) & ~127;
+	drawStats.ringBytes += size;
+	*offset = ring.offset + at;
+	return ring.ptr + at;
+}
+
 // ---- frames -----------------------------------------------------------------
 
 void
