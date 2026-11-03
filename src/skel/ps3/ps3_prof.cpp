@@ -100,7 +100,9 @@ void
 PS3_ProfFrame(void)
 {
 	u64 now = profNow();
-	PS3_crumbFrame++;	// the frame number in the [crash] lines
+	PS3_crumbFrame++;	// the frame number in the [crash] lines (and the hang watchdog's)
+	if (!PS3_logsOn)
+		return;		// no reports without the log (USRDIR/logson.txt, from res-PS3)
 	if (frameStart)
 		frameTotal += now - frameStart;
 	frameStart = now;

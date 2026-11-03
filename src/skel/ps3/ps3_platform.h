@@ -31,6 +31,7 @@ void PS3_LogSync(void);	// log onto the disk (fsync)
 void PS3_StopWatchdog(void);
 void PS3_InstallCrashHandler(void);	// liblv2dbg PPU exception handler (if lv2 allows it)
 extern unsigned PS3_crumbFrame;
+extern int PS3_logsOn;	// USRDIR/logson.txt (else no log file, no reports; from res-PS3)
 
 // ps3_fs.cpp
 // Resolves a game path (relative to the emulated working directory, '\\'

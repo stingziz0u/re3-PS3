@@ -1,6 +1,11 @@
 // ps3_log.cpp -- log file in USRDIR: thread-safe, rotated at boot (the
 // previous run stays as re3-ps3.old.log), size-capped, every line flushed so
 // a hang or a crash still leaves the last line on disk.
+//
+// From res-PS3: only with an (empty) USRDIR/logson.txt. Without it no log file is
+// made or touched, the lines aren't even formatted and the profiler and the
+// game's diagnostic watchers stay idle (PS3_logsOn): nothing to write to a
+// hard disk the streaming reads from (TyrQuakeCell's logs cost frames on HDDs).
 
 #include <stdio.h>
 #include <stdint.h>
@@ -20,6 +25,7 @@ extern "C" FILE *__real_fopen(const char *path, const char *mode);
 #define PS3_LOG_MAX_BYTES (4 * 1024 * 1024)
 
 static FILE *log_file;
+extern "C" { int PS3_logsOn; }	// USRDIR/logson.txt
 static long log_bytes;
 static int log_capped;
 static sys_mutex_t log_mutex;
@@ -51,6 +57,14 @@ PS3_LogInit(void)
 	sysMutexAttrInitialize(attr);
 	attr.attr_recursive = SYS_MUTEX_ATTR_RECURSIVE;
 	log_mutex_ok = (sysMutexCreate(&log_mutex, &attr) == 0);
+
+	FILE *on = __real_fopen(PS3_USRDIR "/logson.txt", "rb");
+	if (!on) {
+		PS3_logsOn = 0;	// no log: the old one is left as it is
+		return;
+	}
+	fclose(on);
+	PS3_logsOn = 1;
 
 	remove(PS3_LOG_OLD_PATH);
 	rename(PS3_LOG_PATH, PS3_LOG_OLD_PATH);
@@ -138,6 +152,8 @@ PS3_Logf(const char *fmt, ...)
 	char buf[1024];
 	va_list ap;
 
+	if (!PS3_logsOn)
+		return;
 	va_start(ap, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
@@ -155,6 +171,8 @@ static int
 log_vprintf(const char *fmt, va_list ap)
 {
 	char buf[1024];
+	if (!PS3_logsOn)
+		return 0;
 	int n = vsnprintf(buf, sizeof(buf), fmt, ap);
 	PS3_LogRaw(buf);
 	return n;
