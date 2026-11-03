@@ -54,7 +54,7 @@ int32 texFilterMode = 0;
 int32 texAniso = 1;
 RasterStats rasterStats;
 TexProfile texProfile;
-bool txdDirect = true;	// patch 64 (readTrueColorD3D8)
+bool txdDirect = true;	// res-PS3 patch 64 (readTrueColorD3D8)
 
 // microseconds from the PPU's timebase: sysGetSystemTime is a system call
 // (microseconds each), and the texture code times every level it writes
@@ -1497,7 +1497,7 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 		uploadMipChain(raster, natras, rgba, 0, cx);
 }
 
-// ---- patch 64: PC true colour levels as they were read ---------------------------
+// ---- res-PS3 patch 64: PC true colour levels as they were read ---------------------------
 // readTrueColorD3D8 puts a level into the locked buffer as the TXD has it;
 // the thread that converts the level (convertLevel) turns it into RGBA8
 // first, in place: the buffer is the size of the level in RGBA8, the 16 bit
@@ -1575,7 +1575,7 @@ struct TexJob {
 	uint32 texels;
 	volatile int32 state;
 	uint16 validBits;
-	uint8 srcFmt;		// patch 64: SRC_*, what src holds
+	uint8 srcFmt;		// res-PS3 patch 64: SRC_*, what src holds
 	TexJob *next;
 };
 enum { TJ_QUEUED, TJ_RUNNING, TJ_DONE, TJ_CANCELLED };
@@ -2329,13 +2329,13 @@ readPalettedD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 
 	return true;
 }
 
-// ---- patch 64: fast path for the PC TXDs' true colour textures -------------------
+// ---- res-PS3 patch 64: fast path for the PC TXDs' true colour textures -------------------
 // The streamed TXDs' 8888/888/1555/555 textures went through librw's way
 // (raster.cpp convertTexToCurrentPlatform): a D3D8 raster holding the
 // levels, each level made into an Image (a pass over every texel through a
 // converter call), the alpha scanned twice, an RGBA8 raster from it (a
 // second pass), staging buffers zeroed first: 6-8 ms on the game thread for
-// a TXD like yankee or mule (patch 63's [stream] lines), one 13.7 ms. Here
+// a TXD like yankee or mule (res-PS3 patch 63's [stream] lines), one 13.7 ms. Here
 // the levels go into the PS3 raster's lock as the TXD has them and the
 // texture thread (the PPU's second thread) turns them into RGBA8 with the
 // swizzle and the mip levels it already did: the game thread reads, checks

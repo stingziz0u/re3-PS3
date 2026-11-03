@@ -1,8 +1,8 @@
 // ps3_cdstream.cpp -- CdStream (the .img streaming reads) for the PS3.
 //
-// Patch 68: a reader thread. CdStreamRead used to do the read right away
+// res-PS3 patch 68: a reader thread. CdStreamRead used to do the read right away
 // with lv2 calls, the game thread waiting for the disk: 8-18 ms in the
-// frames that started a read (patch 67's [loadreq] lines, Ren's drive
+// frames that started a read (res-PS3 patch 67's [loadreq] lines, Ren's drive
 // around the city: every one of the 80 was CdStreamRead). Now it queues the
 // read and returns; the thread reads while the game goes on, and the
 // channel says READING until it's done, as the PC's CdStream. CdStreamSync
@@ -32,7 +32,7 @@ bool flushStream[MAX_CDCHANNELS];
 struct CdChannel
 {
 	volatile int32 nStatus;
-	// patch 68: the read queued for the reader thread
+	// res-PS3 patch 68: the read queued for the reader thread
 	volatile bool busy;	// queued or being read (the buffer is the thread's)
 	void *buffer;
 	int32 img;
@@ -52,7 +52,7 @@ static int32 lastPosnRead;
 uint32 gPS3CdReads, gPS3CdErrors;
 uint64 gPS3CdBytes;
 
-// ---- patch 68: the reader thread ----
+// ---- res-PS3 patch 68: the reader thread ----
 static bool gCdThreadOn;
 static sys_ppu_thread_t gCdThread;
 static sys_mutex_t gCdMutex;
@@ -226,7 +226,7 @@ CdStreamRead(int32 channel, void *buffer, uint32 offset, uint32 size)
 	}
 
 	if (gCdThreadOn) {
-		// patch 68: queued for the reader thread
+		// res-PS3 patch 68: queued for the reader thread
 		sysMutexLock(gCdMutex, 0);
 		if (ch->busy) {
 			// still reading the last one: as the PC's CdStream, not taken
@@ -343,7 +343,7 @@ CdStreamGetImageName(int32 cd)
 void
 CdStreamRemoveImages(void)
 {
-	// patch 68: no read of the thread left on a file being closed
+	// res-PS3 patch 68: no read of the thread left on a file being closed
 	for (int32 c = 0; c < gNumChannels; c++)
 		CdStreamSync(c);
 	for (int32 i = 0; i < gNumImages; i++) {

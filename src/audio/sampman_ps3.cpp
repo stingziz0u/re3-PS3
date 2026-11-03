@@ -46,7 +46,7 @@
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_NO_SIMD
 #include "minimp3.h"
-#include "../../ps3/spu/spumix.h"	// patch 49: the SPU mixer job
+#include "../../ps3/spu/spumix.h"	// res-PS3 patch 49: the SPU mixer job
 
 cSampleManager SampleManager;
 bool _bSampmanInitialised = false;
@@ -55,7 +55,7 @@ uint32 BankStartOffset[MAX_SFX_BANKS];
 uint32 nNumMP3s;
 int defaultProvider = 0;
 
-// patch 49: the mixer on an SPU (SpuMix* below). gPS3SpuAudio: perf.txt
+// res-PS3 patch 49: the mixer on an SPU (SpuMix* below). gPS3SpuAudio: perf.txt
 // switches it between runs; nospuaudio.txt in USRDIR turns it off. The PPU
 // mixer stays as the fallback. gPS3SpuWaitUs: the mixer thread's wait for the
 // SPU (inside gPS3MixerBusyUs, but the PPU is free meanwhile)
@@ -620,7 +620,7 @@ StreamCreate(const char *filename)
 	s->dec = d;
 	s->rate = d->GetRate();
 	s->lengthMs = d->GetLengthMS();
-	s->ring = (int16*)memalign(128, RING_FRAMES*2*sizeof(int16));	// patch 49: the SPU reads it by DMA
+	s->ring = (int16*)memalign(128, RING_FRAMES*2*sizeof(int16));	// res-PS3 patch 49: the SPU reads it by DMA
 	s->volume = 0;
 	s->pan = 63;
 	return s;
@@ -942,7 +942,7 @@ AudioBlock(u32 index)
 }
 
 // ============================================================================
-// patch 49: the mixer on an SPU (ps3/spu/spumix.c)
+// res-PS3 patch 49: the mixer on an SPU (ps3/spu/spumix.c)
 // ============================================================================
 // The mixer thread fills a job with every channel and stream to mix (gains
 // and validity worked out here, as MixChannel/MixStream do), writes its
@@ -1419,7 +1419,7 @@ AudioPortShutdown(void)
 	s_audioQuit = true;
 	sysThreadJoin(audioTid, &rv);
 	sysThreadJoin(streamTid, &rv);
-	SpuMixShutdown();	// patch 49
+	SpuMixShutdown();	// res-PS3 patch 49
 	audioPortStop(audioPort);
 	audioRemoveNotifyEventQueue(audioKey);
 	audioPortClose(audioPort);
@@ -2182,7 +2182,7 @@ cSampleManager::StartStreamedFile(uint8 nFile, uint32 nPos, uint8 nStream)
 	if(nFile >= TOTAL_STREAMED_SOUNDS || nStream >= MAX_STREAMS)
 		return false;
 	if(nFile == STREAMED_SOUND_RADIO_MP3_PLAYER){
-		StreamCancel(nStream);	// patch 69: done right here
+		StreamCancel(nStream);	// res-PS3 patch 69: done right here
 		// sampman_oal: started again while one plays (it ended) = the next
 		// file; else the file and position of nPos in the station
 		for(uint32 tries = 0; tries < nNumMP3s; tries++){
