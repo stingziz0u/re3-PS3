@@ -48,6 +48,12 @@ The performance work of [reLCS-PS3](https://github.com/stingziz0u/reLCS-PS3)
   play. An empty `USRDIR/logson.txt` turns it on (see
   [Troubleshooting](#troubleshooting)).
 
+Fixes:
+
+- **No more square car lights**: the white boxes drawn at every car's
+  headlights and tail lights are gone, as in reLCS-PS3 (the coronas and the
+  light on the road still are; traffic lights and sirens are unchanged).
+
 ## Features
 
 - Native 720p, rendered on the RSX: tiled colour/depth buffers, compressed
