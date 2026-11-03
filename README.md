@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.4.1 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.5 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, and the game has been played to 100% on a real PS3. Expect
 > bugs anyway and please report them with the log (see
@@ -25,6 +25,28 @@ your own PC copy.
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
 PlayStation button icons and the controller picture of the settings page).
+
+## What's new in 1.5
+
+The performance work of [reLCS-PS3](https://github.com/stingziz0u/reLCS-PS3)
+1.1 and 1.2, brought over:
+
+- **The Cell's SPUs at work**: the audio mixer runs on one SPU and the
+  particles' sprites (smoke, sparks, explosions, rain, splashes) are built on
+  another, so the PPU has that time for the game (in reLCS the mixer alone
+  took up to 8 ms of the PPU per frame; 0.3 on the SPU).
+- **Smoother streaming**: the game data is read on a thread of its own (the
+  game no longer stops to wait for the disk when a new area or car loads),
+  true colour textures go straight into the PS3's textures and are finished
+  by the texture thread on the PPU's second hardware thread, and the radio,
+  music and mission audio changes are opened by the audio stream thread.
+- **Faster collision**: a first pass with AltiVec over the triangles'
+  bounding boxes skips the exact tests that can't hit.
+- The game's busiest code (collision, physics, entities, animation, the
+  world, the render list and the RSX pipelines) is built with `-O3`.
+- **The log is off by default**: nothing is written to the disk while you
+  play. An empty `USRDIR/logson.txt` turns it on (see
+  [Troubleshooting](#troubleshooting)).
 
 ## Features
 
@@ -103,7 +125,7 @@ original):
 
 ## Installation
 
-1. Install `re3-ps3-1.4.1-alpha.pkg` on a PS3 with homebrew support (CFW or
+1. Install `re3-ps3-1.5-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **re3**.
 2. The PKG creates `/dev_hdd0/game/RE3PS3000/USRDIR` with these empty
@@ -158,8 +180,11 @@ or platforms don't work.
 
 ## Troubleshooting
 
-- The log is `USRDIR/re3-ps3.log` (the previous one: `re3-ps3.old.log`).
-  Send it with any report: it says what the game was doing when it crashed.
+- **The log is off by default** (nothing is written to the disk while you
+  play). To turn it on, create an empty `USRDIR/logson.txt`; the log is then
+  `USRDIR/re3-ps3.log` (the previous one: `re3-ps3.old.log`). Send it with any
+  report: it says what the game was doing when it crashed. The tests below
+  need it on.
 - A black screen at start: create an empty `USRDIR/notiles.txt` (turns off
   the tiled buffers), and report it.
 - A texture that looks wrong: create an empty `USRDIR/nodxt.txt` (DXT
@@ -168,6 +193,19 @@ or platforms don't work.
   game's own thread again (they are converted on a second PPU thread);
   `USRDIR/novmx.txt` makes the mip levels without AltiVec; and
   `USRDIR/dxt32.txt` keeps converted DXT1 textures in 32 bits instead of 16.
+- Something not loading, or loading late: an empty `USRDIR/nocdthread.txt`
+  reads the game data on the game's own thread again, and
+  `USRDIR/notxddirect.txt` converts the TXDs' true colour textures the old
+  way. Radio, music or mission audio that misbehaves:
+  `USRDIR/nostreamasync.txt` opens the streams on the game's thread again.
+  Collisions that look wrong: `USRDIR/novmxcol.txt` turns off the AltiVec
+  collision broadphase.
+- Sound or particles that look or sound wrong: an empty
+  `USRDIR/nospuaudio.txt` mixes the audio on the PPU again,
+  `USRDIR/nospuparticles.txt` builds the particles on the PPU again, and
+  `USRDIR/spuparticles_ram.txt` keeps them on the SPU but has it write to
+  main memory (the PPU copies them for the RSX). Report which one changes
+  it, with the log.
 - `USRDIR/autotest.txt` runs an automatic test while you watch (load a save
   outdoors first). One line in it chooses the test: nothing (weather, a
   flight over the islands, save/load, side missions, garages), `mode=full`
@@ -193,7 +231,7 @@ On Linux or WSL (Ubuntu):
    make -C ps3 verify
    ```
 
-   The result is `ps3/re3-ps3-1.4.1-alpha.pkg`.
+   The result is `ps3/re3-ps3-1.5-alpha.pkg`.
 
 Other targets: `make -C ps3 DEBUG=1` (debug build with asserts),
 `make -C ps3 STAGE=1` (headless test build: loads the game without video,
