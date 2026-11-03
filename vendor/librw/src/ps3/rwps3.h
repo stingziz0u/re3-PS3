@@ -121,6 +121,8 @@ struct Ps3Raster
 	uint8   vramDXT;	// 1 / 5: an RGBA texture compressed into DXT for VRAM (it didn't fit as it was)
 	bool    forcedMips;	// the MIPMAPS option added the mip levels
 	int8    pendingJobs;	// levels queued for the texture thread (stage 2)
+	uint8   lockSrcFmt;	// patch 64: what the locked level holds (0: RGBA8; else a PC
+				// format the texture thread turns into RGBA8, readTrueColorD3D8)
 	// hardware probe (USRDIR/probe.txt): a texture described as is, its
 	// data written by the probe (format with the SWZ/LIN bit, location)
 	uint8   probeFmt;	// 0: not a probe texture
@@ -158,6 +160,7 @@ extern bool dxt1As16;		// DXT1 textures in 16 bits in VRAM (default on; USRDIR/d
 extern bool dxtNative;		// DXT textures kept as DXT in VRAM, sampled by the RSX (default on; USRDIR/nodxt.txt turns it off)
 extern bool vmxMips;		// mip levels made with AltiVec (default on; USRDIR/novmx.txt turns it off)
 extern bool texAsync;		// textures converted on a second PPU thread (default on; USRDIR/notexthread.txt turns it off)
+extern bool txdDirect;		// patch 64: true colour PC textures read straight into PS3 rasters (default on; USRDIR/notxddirect.txt turns it off)
 // texels the texture thread still has to convert (the game's streaming
 // stops loading more in a frame while this is high); 0 in stage 1
 uint32 textureBacklog(void);
@@ -211,6 +214,11 @@ extern uint32 vramEvictions;
 // d3d8.cpp: an 8/4 bit palettized PC texture straight into VRAM. false: not
 // handled (the stream is untouched); true: read, *out is the raster or nil
 bool readPalettedD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 numLevels, Raster **out);	// models the streaming threw out for VRAM
+// patch 64: the same for a true colour PC texture (8888, 888, 1555, 555): its
+// levels go as they are into the PS3 raster, the texture thread turns them
+// into RGBA8 (librw's way: D3D8 raster, Image, two passes per texel and two
+// alpha scans on the game thread). false: not handled, the stream untouched
+bool readTrueColorD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 numLevels, Raster **out);
 #endif
 
 Texture *readNativeTexture(Stream *stream);
@@ -274,6 +282,10 @@ struct TexProfile {
 	// over while waiting at the frame's start, and how long it waited
 	uint32 asyncLevels, helpedLevels;
 	uint64 syncWaitUs;
+	// patch 64: true colour PC textures read straight (readTrueColorD3D8),
+	// the game thread's time for them (reading, alpha check, raster setup)
+	uint32 direct;
+	uint64 directUs;
 };
 // names of textures that aren't image files either (texture.cpp)
 bool imageMissKnown(const char *name, const char *mask);

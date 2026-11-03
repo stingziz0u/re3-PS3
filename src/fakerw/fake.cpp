@@ -304,7 +304,9 @@ RwBool rwNativeTextureHackRead(RwStream *stream, RwTexture **tex, RwInt32 size)
 {
 	*tex = Texture::streamReadNative(stream);
 #ifdef LIBRW
-	(*tex)->raster = rw::Raster::convertTexToCurrentPlatform((*tex)->raster);
+	// a texture without raster (a fast path that couldn't make it): nothing to convert
+	if(*tex && (*tex)->raster)
+		(*tex)->raster = rw::Raster::convertTexToCurrentPlatform((*tex)->raster);
 #endif
 	return *tex != nil;
 }

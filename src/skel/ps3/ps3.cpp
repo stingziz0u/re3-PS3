@@ -843,6 +843,17 @@ PS3_GameMain(void)
 		}
 		PS3_Logf("[5] texture thread: %s", rw::ps3::texAsync ? "on (notexthread.txt turns it off)" : "OFF (notexthread.txt)");
 	}
+	// the TXDs' true colour textures straight into PS3 rasters, turned into
+	// RGBA8 by the texture thread (res-PS3 patch 64). An empty
+	// USRDIR/notxddirect.txt: librw's way, as before
+	{
+		FILE *td = fopen(PS3_USRDIR "/notxddirect.txt", "rb");
+		if (td) {
+			fclose(td);
+			rw::ps3::txdDirect = false;
+		}
+		PS3_Logf("[5] true colour TXD textures: %s", rw::ps3::txdDirect ? "read straight (notxddirect.txt turns it off)" : "librw's way (notxddirect.txt)");
+	}
 #endif
 
 	openParams.width = PS3_SCREEN_WIDTH;

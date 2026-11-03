@@ -54,6 +54,7 @@ int32 texFilterMode = 0;
 int32 texAniso = 1;
 RasterStats rasterStats;
 TexProfile texProfile;
+bool txdDirect = true;	// patch 64 (readTrueColorD3D8)
 
 // microseconds from the PPU's timebase: sysGetSystemTime is a system call
 // (microseconds each), and the texture code times every level it writes
@@ -1496,6 +1497,60 @@ convertLevel(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, ConvCtx
 		uploadMipChain(raster, natras, rgba, 0, cx);
 }
 
+// ---- patch 64: PC true colour levels as they were read ---------------------------
+// readTrueColorD3D8 puts a level into the locked buffer as the TXD has it;
+// the thread that converts the level (convertLevel) turns it into RGBA8
+// first, in place: the buffer is the size of the level in RGBA8, the 16 bit
+// texels are expanded from the end so none is written over before it is read.
+// Same results as librw's converters (conv_RGBA8888_from_BGRA8888,
+// conv_RGBA8888_from_ARGB1555: 5 bits to 8 as c*255/31).
+enum { SRC_RGBA8 = 0, SRC_BGRA8, SRC_BGRX8, SRC_ARGB1555, SRC_XRGB1555 };
+
+static const uint8 pc5to8[32] = {
+	0, 8, 16, 24, 32, 41, 49, 57, 65, 74, 82, 90, 98, 106, 115, 123,
+	131, 139, 148, 156, 164, 172, 180, 189, 197, 205, 213, 222, 230, 238, 246, 255
+};
+
+static void
+expandToRGBA8(uint8 *p, int32 n, int32 fmt)
+{
+	switch(fmt){
+	case SRC_BGRA8:
+	case SRC_BGRX8:
+		for(int32 k = 0; k < n; k++, p += 4){
+			uint8 b = p[0];
+			p[0] = p[2];
+			p[2] = b;
+			if(fmt == SRC_BGRX8)
+				p[3] = 0xFF;
+		}
+		break;
+	case SRC_ARGB1555:
+	case SRC_XRGB1555:
+		for(int32 k = n-1; k >= 0; k--){
+			uint32 v = p[2*k] | p[2*k+1]<<8;	// little endian, as D3D has it
+			uint8 *o = p + 4*k;
+			o[0] = pc5to8[(v>>10) & 0x1F];
+			o[1] = pc5to8[(v>>5) & 0x1F];
+			o[2] = pc5to8[v & 0x1F];
+			o[3] = (fmt == SRC_XRGB1555 || (v & 0x8000)) ? 0xFF : 0;
+		}
+		break;
+	}
+}
+
+static void
+expandLevel(Raster *raster, int32 level, uint8 *p, int32 fmt)
+{
+	if(fmt == SRC_RGBA8)
+		return;
+	uint64 t0 = texProfNow();
+	expandToRGBA8(p, levelDim(raster->originalWidth, level)*levelDim(raster->originalHeight, level), fmt);
+	texProfile.us[TEXPROF_FROMIMAGE] += texProfNow() - t0;
+}
+
+static bool stagingNoClear;	// the next lock's buffer is written whole: not zeroed first
+
 // ---- the texture thread ---------------------------------------------------------
 // The PPU runs two threads at once and the game used one. The levels the
 // game writes into its textures (streaming: DXT decode, mip levels, swizzle,
@@ -1520,6 +1575,7 @@ struct TexJob {
 	uint32 texels;
 	volatile int32 state;
 	uint16 validBits;
+	uint8 srcFmt;		// patch 64: SRC_*, what src holds
 	TexJob *next;
 };
 enum { TJ_QUEUED, TJ_RUNNING, TJ_DONE, TJ_CANCELLED };
@@ -1570,6 +1626,7 @@ static void
 tjRun(TexJob *j, ConvCtx *cx)
 {
 	cx->validBits = 0;
+	expandLevel(j->raster, j->level, j->src, j->srcFmt);
 	convertLevel(j->raster, j->natras, j->level, j->src, cx);
 	sysMutexLock(tjMutex, 0);
 	j->validBits = cx->validBits;
@@ -1744,7 +1801,7 @@ tjGrow(ConvBuf *b, uint32 need)
 
 // true: the level is the texture thread's (and so is src)
 static bool
-texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src)
+texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src, uint8 srcFmt)
 {
 	if(!tjOn || raster->type != Raster::TEXTURE || natras->vram == nil || natras->validLevels != 0)
 		return false;
@@ -1776,6 +1833,7 @@ texJobQueue(Raster *raster, Ps3Raster *natras, int32 level, uint8 *src)
 	j->natras = natras;
 	j->level = level;
 	j->src = src;
+	j->srcFmt = srcFmt;
 	// the work, in texels converted (a native DXT level is only copied)
 	j->texels = (natras->vramFmt == PS3_VRAM_DXT && !natras->vramDXT ? w*h/16 : w*h) + (mip ? w*h/3 : 0);
 	j->state = TJ_QUEUED;
@@ -1888,7 +1946,7 @@ lockTexture(Raster *raster, Ps3Raster *natras, int32 level, int32 lockMode)
 		rwFree(natras->staging);
 		natras->staging = nil;
 		return nil;
-	}else
+	}else if(!stagingNoClear)
 		memset(natras->staging, 0, size);
 	natras->lockedLevel = level;
 	return natras->staging;
@@ -1897,16 +1955,19 @@ lockTexture(Raster *raster, Ps3Raster *natras, int32 level, int32 lockMode)
 static void
 unlockTexture(Raster *raster, Ps3Raster *natras, int32 level)
 {
+	uint8 srcFmt = natras->lockSrcFmt;
+	natras->lockSrcFmt = SRC_RGBA8;
 	if(natras->staging == nil)
 		return;
 	if((raster->privateFlags & Raster::LOCKWRITE) && level < natras->numLevels){
 		natras->serial++;
-		if(texJobQueue(raster, natras, level, natras->staging)){
+		if(texJobQueue(raster, natras, level, natras->staging, srcFmt)){
 			// the texture thread converts it and frees the buffer
 			natras->staging = nil;
 			natras->lockedLevel = -1;
 			return;
 		}
+		expandLevel(raster, level, natras->staging, srcFmt);
 		convertLevel(raster, natras, level, natras->staging, &mainCtx);
 	}
 	rwFree(natras->staging);
@@ -2264,6 +2325,115 @@ readPalettedD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 
 		GETPS3RASTEREXT(ras)->serial++;
 	texProfile.us[TEXPROF_INDEXED] += texProfNow() - t0;
 	texProfile.indexed++;
+	*out = ras;
+	return true;
+}
+
+// ---- patch 64: fast path for the PC TXDs' true colour textures -------------------
+// The streamed TXDs' 8888/888/1555/555 textures went through librw's way
+// (raster.cpp convertTexToCurrentPlatform): a D3D8 raster holding the
+// levels, each level made into an Image (a pass over every texel through a
+// converter call), the alpha scanned twice, an RGBA8 raster from it (a
+// second pass), staging buffers zeroed first: 6-8 ms on the game thread for
+// a TXD like yankee or mule (patch 63's [stream] lines), one 13.7 ms. Here
+// the levels go into the PS3 raster's lock as the TXD has them and the
+// texture thread (the PPU's second thread) turns them into RGBA8 with the
+// swizzle and the mip levels it already did: the game thread reads, checks
+// level 0's alpha (C8888 or C888, as imageFindRasterFormat said) and
+// queues. USRDIR/notxddirect.txt: librw's way, as before.
+bool
+readTrueColorD3D8(Stream *stream, int32 width, int32 height, int32 format, int32 numLevels, Raster **out)
+{
+	*out = nil;
+	if(!txdDirect || rw::platform != PLATFORM_PS3 || (format & (Raster::PAL4|Raster::PAL8)))
+		return false;
+	// librw's own D3D8 raster can't take these either (no levels)
+	if((format & (Raster::MIPMAP|Raster::AUTOMIPMAP)) == (Raster::MIPMAP|Raster::AUTOMIPMAP))
+		return false;
+	if(width <= 0 || height <= 0 || width > 4096 || height > 4096 || numLevels <= 0)
+		return false;
+	int32 src, bpp;
+	switch(format & 0xF00){
+	case Raster::C8888: src = SRC_BGRA8; bpp = 4; break;
+	case Raster::C888: src = SRC_BGRX8; bpp = 4; break;	// X8R8G8B8
+	case Raster::C1555: src = SRC_ARGB1555; bpp = 2; break;
+	case Raster::C555: src = SRC_XRGB1555; bpp = 2; break;
+	default: return false;	// 565, 4444, LUM8: librw's way (it fails them too)
+	}
+
+	uint64 t0 = texProfNow();
+	Raster *ras = nil;
+	bool skip = false;	// level 0 unusable: the others skipped too (the stream still read past them)
+	for(int32 i = 0; i < numLevels; i++){
+		uint32 size = stream->readU32();
+		int32 lw = levelDim(width, i);
+		int32 lh = levelDim(height, i);
+		uint32 need = (uint32)(lw*lh*bpp);
+		uint8 *level0 = nil;
+		if(i == 0){
+			// level 0 says whether the texture has alpha: read before the
+			// raster is made (a short one: no alpha, the raster left empty)
+			bool alpha = false;
+			if(size >= need)
+				level0 = (uint8*)rwMalloc(need, MEMDUR_FUNCTION | ID_IMAGE);
+			if(level0){
+				stream->read8(level0, need);
+				stream->seek(size - need);
+				int32 n = lw*lh;
+				if(src == SRC_BGRA8){
+					uint8 minA = 0xFF;
+					for(int32 k = 0; k < n; k++)
+						minA &= level0[k*4+3];
+					alpha = minA != 0xFF;
+				}else if(src == SRC_ARGB1555){
+					uint8 bits = 0x80;
+					for(int32 k = 0; k < n; k++)
+						bits &= level0[k*2+1];	// the high byte: A bit 0x80
+					alpha = bits != 0x80;
+				}
+			}else
+				stream->seek(size);
+			int32 rf = (alpha ? Raster::C8888 : Raster::C888) | (format & 7) |
+			           (format & (Raster::MIPMAP | Raster::AUTOMIPMAP));
+			ras = Raster::create(width, height, 32, rf);
+			if(ras == nil || level0 == nil){
+				rwFree(level0);
+				skip = true;
+				continue;
+			}
+			rasterStats.numExpanded++;
+		}else if(skip || size < need){
+			stream->seek(size);
+			continue;
+		}
+		if(i >= ras->getNumLevels()){
+			// a level the raster doesn't keep
+			rwFree(level0);
+			if(i > 0)
+				stream->seek(size);
+			continue;
+		}
+		stagingNoClear = true;	// written whole below
+		uint8 *dst = ras->lock(i, Raster::LOCKWRITE|Raster::LOCKNOFETCH);
+		stagingNoClear = false;
+		if(dst){
+			if(level0)
+				memcpy(dst, level0, need);
+			else{
+				stream->read8(dst, need);
+				stream->seek(size - need);
+			}
+			GETPS3RASTEREXT(ras)->lockSrcFmt = src;
+			ras->unlock(i);
+		}else if(i > 0)
+			stream->seek(size);
+		rwFree(level0);
+	}
+	if(ras)
+		GETPS3RASTEREXT(ras)->serial++;
+	uint64 dt = texProfNow() - t0;
+	texProfile.direct++;
+	texProfile.directUs += dt;
 	*out = ras;
 	return true;
 }

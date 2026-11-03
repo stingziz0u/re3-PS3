@@ -577,6 +577,17 @@ readNativeTexture(Stream *stream)
 		}
 	}
 
+#ifdef RW_PS3_RSX
+	// patch 64: true colour levels straight into a PS3 raster (ps3raster.cpp)
+	if(!compression && pallength == 0){
+		Raster *fast;
+		if(ps3::readTrueColorD3D8(stream, width, height, format|type, numLevels, &fast)){
+			tex->raster = fast;
+			return tex;
+		}
+	}
+#endif
+
 	Raster *raster;
 	D3dRaster *ras;
 	if(compression){
