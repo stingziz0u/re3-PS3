@@ -135,6 +135,11 @@ ifeq ($(DEBUG),1)
 else
   COMMON_FLAGS += -DNDEBUG
 endif
+# -O3 on the files where the game thread's time goes (collision, physics,
+# entities, animation, the world and the render list, librw's RSX pipelines;
+# from res-PS3). HOT_O3=0 builds them at -O2 as before, to compare.
+HOT_O3 ?= 1
+COMMON_FLAGS += -DPS3_HOT_O3=$(HOT_O3)
 COMMON_FLAGS += $(EXTRA_CFLAGS)
 
 LIBRW_FLAGS := $(COMMON_FLAGS) -I$(RW) -I$(ROOT)/vendor/librw
@@ -281,7 +286,7 @@ $(OBJDIR)/flags.mode: FORCE
 $(OBJDIR)/vendor/%.o: $(ROOT)/vendor/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(LIBRW_FLAGS) $(VMX_FLAGS) -c $< -o $@
+	@$(CXX) $(LIBRW_FLAGS) $(VMX_FLAGS) $(HOT_FLAGS) -c $< -o $@
 
 # AltiVec (VMX): only the files that use it (mip levels, the hardware probe's test)
 $(OBJDIR)/vendor/librw/src/ps3/ps3vmx.o: VMX_FLAGS := -maltivec
@@ -289,10 +294,21 @@ $(OBJDIR)/vendor/librw/src/ps3/ps3vmx.o: VMX_FLAGS := -maltivec
 $(OBJDIR)/src/%.o: $(SRC)/%.cpp $(OBJDIR)/flags.mode
 	@mkdir -p $(dir $@)
 	@echo "CXX $(patsubst $(ROOT)/%,%,$<)"
-	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) $(VMX_FLAGS) -c $< -o $@
+	@$(CXX) $(GAME_FLAGS) $(OBJ_FLAGS) $(HOT_FLAGS) $(VMX_FLAGS) -c $< -o $@
 
 # the collision broadphase with AltiVec (only that file; from res-PS3)
 $(OBJDIR)/src/collision/ColVmx.o: VMX_FLAGS := -maltivec
+
+# the hot files (HOT_O3)
+HOT_SRCS := $(wildcard $(SRC)/collision/*.cpp $(SRC)/entities/*.cpp $(SRC)/animation/*.cpp $(SRC)/math/*.cpp \
+  $(SRC)/core/World.cpp $(SRC)/core/Placeable.cpp $(SRC)/render/Renderer.cpp $(SRC)/rw/VisibilityPlugins.cpp \
+  $(SRC)/peds/Ped.cpp $(SRC)/peds/PedAI.cpp $(SRC)/vehicles/Automobile.cpp $(SRC)/vehicles/Vehicle.cpp \
+  $(SRC)/vehicles/Bike.cpp $(SRC)/vehicles/Transmission.cpp)
+HOT_RW := $(addprefix $(RW)/, base.cpp frame.cpp hanim.cpp anim.cpp ps3/ps3device.cpp ps3/ps3pipe.cpp)
+HOT_OBJS := $(patsubst $(ROOT)/%.cpp,$(OBJDIR)/%.o,$(HOT_SRCS) $(HOT_RW))
+ifeq ($(HOT_O3),1)
+$(HOT_OBJS): HOT_FLAGS := -O3
+endif
 
 # the SPU mixer program, and the object that carries it
 $(SPU_ELF): $(CURDIR)/spu/spumix.c $(CURDIR)/spu/spumix.h $(CURDIR)/Makefile
