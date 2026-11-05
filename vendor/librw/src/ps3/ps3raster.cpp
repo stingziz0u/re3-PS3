@@ -2650,6 +2650,13 @@ rasterCreate(Raster *raster)
 
 	Raster *ret = raster;
 
+	// from reVC-PS3-Optimised (Gamer100Dev): no negative sizes, none whose 32-bit
+	// strides/sizes would overflow
+	if(raster->width < 0 || raster->height < 0 ||
+	   (uint64)raster->width * raster->height * 4u > 0x7FFFFFFFu){
+		RWERROR((ERR_INVRASTER));
+		return nil;
+	}
 	if(raster->width == 0 || raster->height == 0){
 		raster->flags |= Raster::DONTALLOCATE;
 		raster->stride = 0;
@@ -2977,11 +2984,18 @@ readNativeTexture(Stream *stream)
 	int32 numLevels = stream->readI32();
 	int32 flags = stream->readI32();
 	int32 compression = stream->readI32();
+	// from reVC-PS3-Optimised (Gamer100Dev): a damaged texture is refused, not read
+	if(width <= 0 || height <= 0 || numLevels <= 0 || numLevels > 16){
+		RWERROR((ERR_INVRASTER));
+		tex->destroy();
+		return nil;
+	}
 
 	Raster *raster;
 	if(flags & 2){
 		raster = Raster::create(width, height, depth, format | Raster::TEXTURE | Raster::DONTALLOCATE, PLATFORM_PS3);
-		allocateDXT(raster, compression, numLevels, flags & 1);
+		if(raster)
+			allocateDXT(raster, compression, numLevels, flags & 1);
 	}else{
 		raster = Raster::create(width, height, depth, format | Raster::TEXTURE, PLATFORM_PS3);
 	}

@@ -929,8 +929,46 @@ PS3_GameMain(void)
 			PS3_Pump();
 			switch (gGameState) {
 			case GS_START_UP:
+#if PS3_STAGE != 1
+				// the intro movies, a test: only with USRDIR/videointrotest.txt
+				if (PS3_MovieTestOn()) {
+					gGameState = GS_INIT_LOGO_MPEG;
+					break;
+				}
+#endif
 				gGameState = GS_INIT_ONCE;
 				break;
+
+#if PS3_STAGE != 1
+			case GS_INIT_LOGO_MPEG:
+				gGameState = PS3_MovieStart("movies/Logo.mpg") ? GS_LOGO_MPEG : GS_INIT_INTRO_MPEG;
+				break;
+
+			case GS_LOGO_MPEG:
+				PS3_MovieRenderFrame();
+				if (PS3_MovieSkipPressed() || PS3_MovieFinished()) {
+					PS3_MovieCancel();
+					gGameState = GS_INIT_INTRO_MPEG;
+				}
+				break;
+
+			case GS_INIT_INTRO_MPEG:
+				if (PS3_MovieStart("movies/GTAtitles.mpg"))
+					gGameState = GS_INTRO_MPEG;
+				else {
+					PS3_MovieShutdown();
+					gGameState = GS_INIT_ONCE;
+				}
+				break;
+
+			case GS_INTRO_MPEG:
+				PS3_MovieRenderFrame();
+				if (PS3_MovieSkipPressed() || PS3_MovieFinished()) {
+					PS3_MovieShutdown();
+					gGameState = GS_INIT_ONCE;
+				}
+				break;
+#endif
 
 			case GS_INIT_ONCE:
 				PS3_Log("[7] CGame::InitialiseOnceAfterRW");
@@ -1031,6 +1069,9 @@ PS3_GameMain(void)
 	}
 
 	PS3_Log("[8] shutdown");
+#if PS3_STAGE != 1
+	PS3_MovieShutdown();	// quit during the intro movies
+#endif
 	if (gGameState == GS_PLAYING_GAME)
 		CGame::ShutDown();
 	DMAudio.Terminate();

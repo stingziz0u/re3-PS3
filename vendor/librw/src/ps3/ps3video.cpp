@@ -76,6 +76,8 @@ static void gpuCollect(uint32 doneFrame);
 
 static VramAlloc ring;
 static uint32 ringSeg, ringHead, ringPeak;
+static uint32 ringWraps;	// the segment started over (ringWrite)
+static bool ringPinned;	// ringAlloc gave out part of this frame's segment
 
 static VideoSettings settings = { 90, 1, 0 };
 static float presentAspect;
@@ -115,9 +117,14 @@ waitFrame(uint32 f)
 	int waited = 0;
 	while((int32)(completedFrame() - f) < 0){
 		usleep(20);
-		if(++waited > 250000){
-			rsxLog("[rsx] WARNING: frame fence timed out (want %u, RSX at %u)", f, completedFrame());
-			break;
+		// from reVC-PS3-Optimised (Gamer100Dev): going on reuses memory the RSX may still
+		// read; keep waiting (a log line every ~5 s), give up after ~30 s
+		if(++waited % 250000 == 0){
+			rsxLog("[rsx] WARNING: still waiting for the frame fence (want %u, RSX at %u)", f, completedFrame());
+			if(waited >= 6*250000){
+				rsxLog("[rsx] WARNING: frame fence given up");
+				break;
+			}
 		}
 	}
 }
@@ -196,10 +203,15 @@ waitFlips(void)
 	int waited = 0;
 	while((int)(flipQueued - flipCompleted) > FB_COUNT - 2){
 		usleep(100);
-		if(++waited > 20000){
-			rsxLog("[rsx] WARNING: flip fence timed out, force-sync");
-			flipCompleted = flipQueued;
-			break;
+		// from reVC-PS3-Optimised (Gamer100Dev): as the frame fence, a display buffer
+		// still on the screen isn't drawn over; a log line every ~2 s, ~30 s at most
+		if(++waited % 20000 == 0){
+			rsxLog("[rsx] WARNING: still waiting for a flip (%u queued, %u done)", flipQueued, flipCompleted);
+			if(waited >= 15*20000){
+				rsxLog("[rsx] WARNING: flip fence given up, force-sync");
+				flipCompleted = flipQueued;
+				break;
+			}
 		}
 	}
 }
@@ -393,14 +405,25 @@ ringWrite(const void *data, uint32 size)
 	if(!ready || ring.ptr == nil)
 		return 0xFFFFFFFF;
 	if(ringHead + size > RING_SEG_SIZE){
-		static int warned;
-		if(!warned){
-			rsxLog("[rsx] WARNING: vertex ring segment full (%u + %u bytes), draws dropped",
-			       ringHead, size);
-			warned = 1;
+		// from reVC-PS3-Optimised (Gamer100Dev): a full segment is started over once the
+		// RSX has drawn what's in it, instead of dropping the draws. Not when an
+		// SPU fills part of it this frame (ringAlloc): that draw comes later
+		if(!ringPinned && size <= RING_SEG_SIZE){
+			if(ringWraps < 8)
+				rsxLog("[rsx] vertex ring segment full (%u + %u bytes): started over after the RSX finished", ringHead, size);
+			ringWraps++;
+			rsxFinishAll();
+			ringHead = 0;
+		}else{
+			static int warned;
+			if(!warned){
+				rsxLog("[rsx] WARNING: vertex ring segment full (%u + %u bytes), draws dropped",
+				       ringHead, size);
+				warned = 1;
+			}
+			drawStats.dropped++;
+			return 0xFFFFFFFF;
 		}
-		drawStats.dropped++;
-		return 0xFFFFFFFF;
 	}
 	uint32 at = ringSeg*RING_SEG_SIZE + ringHead;
 	memcpy(ring.ptr + at, data, size);
@@ -424,6 +447,7 @@ ringAlloc(uint32 size, uint32 *offset)
 		drawStats.dropped++;
 		return nil;
 	}
+	ringPinned = true;
 	uint32 at = ringSeg*RING_SEG_SIZE + ringHead;
 	ringHead = (ringHead + size + 127) & ~127;
 	drawStats.ringBytes += size;
@@ -442,6 +466,7 @@ videoBeginFrame(void)
 		gpuCollect(frame - RING_SEGMENTS);	// done: its timestamps are there
 	}
 	ringSeg = frame % RING_SEGMENTS;
+	ringPinned = false;
 	if(ringHead > ringPeak)
 		ringPeak = ringHead;
 	ringHead = 0;

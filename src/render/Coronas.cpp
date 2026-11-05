@@ -323,6 +323,11 @@ CCoronas::Render(void)
 						float hscale = 0.35f - (wscale - 0.5f) * 0.06f;
 						hscale = Max(hscale, 0.15f);
 
+#ifdef __PS3__
+						// from reVC-PS3-Optimised (Gamer100Dev): ONE/ONE ignored the soft alpha around the
+						// streak, the sprite's quad showed as a square. Still additive
+						RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDSRCALPHA);
+#endif
 						CSprite::RenderOneXLUSprite(spriteCoors.x, spriteCoors.y, spriteCoors.z,
 							spritew * aCoronas[i].size * wscale,
 							spriteh * aCoronas[i].size * fogscale * hscale,
@@ -332,6 +337,9 @@ CCoronas::Render(void)
 							totalFade,
 							recipz,
 							255);
+#ifdef __PS3__
+						RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDONE);
+#endif
 					}else{
 						CSprite::RenderOneXLUSprite_Rotate_Aspect(
 							spriteCoors.x, spriteCoors.y, spriteCoors.z,

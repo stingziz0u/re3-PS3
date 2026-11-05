@@ -398,9 +398,18 @@ CShadows::StoreShadowToBeRendered(uint8 ShadowTexture, CVector *pPosn,
 
 		case SHADOWTEX_HEADLIGHTS:
 		{
+#ifdef __PS3__
+			// from reVC-PS3-Optimised (Gamer100Dev): the beam masked by its texture's alpha
+			// (added as it was, the texels around it showed the rectangle).
+			// Alpha 255: the centre as bright as before (ONE ignored the alpha)
+			StoreShadowToBeRendered(SHADOWTYPE_ADDITIVE_ALPHA, gpShadowHeadLightsTex, pPosn,
+					fFrontX, fFrontY, fSideX, fSideY,
+					255, nRed, nGreen, nBlue,
+#else
 			StoreShadowToBeRendered(SHADOWTYPE_ADDITIVE, gpShadowHeadLightsTex, pPosn,
 					fFrontX, fFrontY, fSideX, fSideY,
 					nIntensity, nRed, nGreen, nBlue,
+#endif
 					15.0f, false, 1.0f);
 
 			break;
@@ -531,6 +540,15 @@ CShadows::StoreCarLightShadow(CAutomobile *pCar, int32 nID, RwTexture *pTexture,
 						|| CCutsceneMgr::IsRunning();
 
 	float fDrawDistance = 27.0f;
+#ifdef __PS3__
+	// from reVC-PS3-Optimised (Gamer100Dev): the headlights masked by their texture's
+	// alpha (alpha 255: as bright as before, ONE ignored the 128)
+	uint8 ps3LightType = pTexture == gpShadowHeadLightsTex ? SHADOWTYPE_ADDITIVE_ALPHA : SHADOWTYPE_ADDITIVE;
+	int16 ps3LightAlpha = pTexture == gpShadowHeadLightsTex ? 255 : 128;
+#else
+	uint8 ps3LightType = SHADOWTYPE_ADDITIVE;
+	int16 ps3LightAlpha = 128;
+#endif
 
 	if ( fDistToCamSqr < SQR(fDrawDistance) || bSpecialCam )
 	{
@@ -541,19 +559,25 @@ CShadows::StoreCarLightShadow(CAutomobile *pCar, int32 nID, RwTexture *pTexture,
 
 			if ( fDistToCam >= (fDrawDistance*(1.0f-(1.0f/4.0f))) && !bSpecialCam ) // BUG? must be 3.0?
 			{
+#ifdef __PS3__
+				// from reVC-PS3-Optimised (Gamer100Dev): from full strength at 75% of the range
+				// to 0 at its end (it began at 0.75 there, a step)
+				float fMult = clamp((fDrawDistance - fDistToCam) / (fDrawDistance*0.25f), 0.0f, 1.0f);
+#else
 				//fDistToCam == 0             -> 3
 				//fDistToCam == fDrawDistance -> 0
 				float fMult = 1.0f - (3.0f / fDrawDistance) * (fDistToCam - (fDrawDistance*(1.0f-(1.0f/3.0f))) );
+#endif
 
 				nRed   = (int32)(nRed   * fMult);
 				nGreen = (int32)(nGreen * fMult);
 				nBlue  = (int32)(nBlue  * fMult);
 			}
 
-			StoreShadowToBeRendered(SHADOWTYPE_ADDITIVE, pTexture, pPosn,
+			StoreShadowToBeRendered(ps3LightType, pTexture, pPosn,
 					fFrontX, fFrontY,
 					fSideX, fSideY,
-					128, nRed, nGreen, nBlue,
+					ps3LightAlpha, nRed, nGreen, nBlue,
 					6.0f, false, 1.0f);
 
 		}
@@ -600,6 +624,11 @@ CShadows::StoreShadowForPedObject(CEntity *pPedObject, float fDisplacementX, flo
 			//fDistToCam == 0             ->  2
 			//fDistToCam == fDrawDistance -> -2
 			float fMult = 1.0f - (4.0f / fDrawDistance) * (fDistToCam - (fDrawDistance*(1.0f/4.0f))); // BUG ? negative
+#ifdef __PS3__
+			// from reVC-PS3-Optimised (Gamer100Dev): never below 0 (a negative strength wrapped
+			// around in the vertex colour: dark shadows popping in the distance)
+			fMult = clamp(fMult, 0.0f, 1.0f);
+#endif
 			int32 nColorStrength;
 
 			if ( fDistToCam >= (fDrawDistance*(1.0f/4.0f)) ) // BUG ? negative
@@ -675,6 +704,13 @@ CShadows::SetRenderModeForShadowType(uint8 ShadowType)
 			break;
 		}
 
+		case SHADOWTYPE_ADDITIVE_ALPHA:
+		{
+			RwRenderStateSet(rwRENDERSTATESRCBLEND,  (void *)rwBLENDSRCALPHA);
+			RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void *)rwBLENDONE);
+			break;
+		}
+
 		case SHADOWTYPE_INVCOLOR:
 		{
 			RwRenderStateSet(rwRENDERSTATESRCBLEND,  (void *)rwBLENDZERO);
@@ -692,6 +728,10 @@ CShadows::RenderStoredShadows(void)
 	RwRenderStateSet(rwRENDERSTATEZWRITEENABLE,      (void *)FALSE);
 	RwRenderStateSet(rwRENDERSTATEZTESTENABLE,       (void *)TRUE);
 	RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void *)TRUE);
+#ifdef __PS3__
+	// from reVC-PS3-Optimised (Gamer100Dev): bilinear, not the filter the draw before left
+	RwRenderStateSet(rwRENDERSTATETEXTUREFILTER,     (void *)rwFILTERLINEAR);
+#endif
 
 	for ( int32 i = 0; i < ShadowsStoredToBeRendered; i++ )
 		asShadowsStored[i].m_nFlags.bRendered = false;
@@ -794,6 +834,10 @@ CShadows::RenderStaticShadows(void)
 	RwRenderStateSet(rwRENDERSTATEZWRITEENABLE,      (void *)FALSE);
 	RwRenderStateSet(rwRENDERSTATEZTESTENABLE,       (void *)TRUE);
 	RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void *)TRUE);
+#ifdef __PS3__
+	// from reVC-PS3-Optimised (Gamer100Dev): bilinear, not the filter the draw before left
+	RwRenderStateSet(rwRENDERSTATETEXTUREFILTER,     (void *)rwFILTERLINEAR);
+#endif
 	RwRenderStateSet(rwRENDERSTATEFOGENABLE,         (void *)FALSE);
 
 	SetAlphaTest(0);
@@ -1595,6 +1639,19 @@ CShadows::CalcPedShadowValues(CVector vecLightDir,
 	*pfFrontY = -vecLightDir.y;
 
 	float fDist = Sqrt(*pfFrontY * *pfFrontY + *pfFrontX * *pfFrontX);
+#ifdef __PS3__
+	if(fDist < 1.0e-4f){
+		// from reVC-PS3-Optimised (Gamer100Dev): a light straight down has no horizontal
+		// direction (0/0, NaN shadow vertices): a neutral footprint, no offset
+		*pfFrontX = 0.0f;
+		*pfFrontY = 0.5f;
+		*pfSideX = 0.5f;
+		*pfSideY = 0.0f;
+		*pfDisplacementX = 0.0f;
+		*pfDisplacementY = 0.0f;
+		return;
+	}
+#endif
 	float fMult = (fDist + 1.0f) / fDist;
 
 	*pfFrontX *= fMult;

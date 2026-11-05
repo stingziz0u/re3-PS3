@@ -13,7 +13,8 @@ enum eShadowType
 	SHADOWTYPE_NONE = 0,
 	SHADOWTYPE_DARK,
 	SHADOWTYPE_ADDITIVE,
-	SHADOWTYPE_INVCOLOR
+	SHADOWTYPE_INVCOLOR,
+	SHADOWTYPE_ADDITIVE_ALPHA	// PS3, from reVC-PS3-Optimised (Gamer100Dev): additive, masked by the texture alpha
 };
 
 enum eShadowTextureType

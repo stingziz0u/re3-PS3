@@ -49,6 +49,16 @@ const char *PS3_ModsOpenPath(const char *abspath);	// a loose file opened for re
 
 // ps3_pad.cpp
 unsigned PS3_PadButtons(void);	// raw DS3 buttons, bit n = GLFW_GAMEPAD_BUTTON_n
+
+// ps3_movie.cpp: the PC intro movies, only with USRDIR/videointrotest.txt
+// (from reVC-PS3-Optimised). Decoded on their own thread, drawn by the game's
+int  PS3_MovieTestOn(void);
+int  PS3_MovieStart(const char *path);
+int  PS3_MovieSkipPressed(void);	// X, O or Start
+void PS3_MovieRenderFrame(void);
+int  PS3_MovieFinished(void);
+void PS3_MovieCancel(void);
+void PS3_MovieShutdown(void);
 void PS3_PadRumble(int large);	// large motor 0..255 (0 = still)
 float PS3_PadDeadzone(bool right);	// stick dead zone, 0.05..0.5 (Gamepad settings)
 int PS3_PadPressure(int button);	// how hard a held button is pressed, 1..255 (game button id 1..16)
