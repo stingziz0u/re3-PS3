@@ -614,6 +614,7 @@ PS3_MovieRenderFrame(void)
 	RwCameraClear(movieCamera, &black, rwCAMERACLEARIMAGE);
 	if(!RwCameraBeginUpdate(movieCamera)) return;
 	Scene.camera = movieCamera;
+	CSprite2d::SetRecipNearClip();	// re3's CSprite2d takes the quad's depth from it: 0 at start up (1/0), the movie was black
 	CSprite2d::InitPerFrame();
 	RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)FALSE);
 	RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)FALSE);

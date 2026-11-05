@@ -1504,16 +1504,30 @@ Render2dStuff(void)
 		CRGBA black(0, 0, 0, 255);
 
 		// top and bottom strips
+#ifdef __PS3__
+		// the rocket launcher sees the whole screen, as in San Andreas (the
+		// sight stays): no black frame. The sniper rifle keeps its scope
+		if (weaponType == WEAPONTYPE_ROCKETLAUNCHER) {
+		}
+		else
+#else
 		if (weaponType == WEAPONTYPE_ROCKETLAUNCHER) {
 			CSprite2d::DrawRect(CRect(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT / 2 - SCREEN_SCALE_Y(180)), black);
 			CSprite2d::DrawRect(CRect(0.0f, SCREEN_HEIGHT / 2 + SCREEN_SCALE_Y(170), SCREEN_WIDTH, SCREEN_HEIGHT), black);
 		}
-		else {
+		else
+#endif
+		{
 			CSprite2d::DrawRect(CRect(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT / 2 - SCREEN_SCALE_Y(210)), black);
 			CSprite2d::DrawRect(CRect(0.0f, SCREEN_HEIGHT / 2 + SCREEN_SCALE_Y(210), SCREEN_WIDTH, SCREEN_HEIGHT), black);
 		}
-		CSprite2d::DrawRect(CRect(0.0f, 0.0f, SCREEN_WIDTH / 2 - SCREEN_SCALE_X(210), SCREEN_HEIGHT), black);
-		CSprite2d::DrawRect(CRect(SCREEN_WIDTH / 2 + SCREEN_SCALE_X(210), 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT), black);
+#ifdef __PS3__
+		if (weaponType != WEAPONTYPE_ROCKETLAUNCHER)
+#endif
+		{
+			CSprite2d::DrawRect(CRect(0.0f, 0.0f, SCREEN_WIDTH / 2 - SCREEN_SCALE_X(210), SCREEN_HEIGHT), black);
+			CSprite2d::DrawRect(CRect(SCREEN_WIDTH / 2 + SCREEN_SCALE_X(210), 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT), black);
+		}
 	}
 
 	MusicManager.DisplayRadioStationName();

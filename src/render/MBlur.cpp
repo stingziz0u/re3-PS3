@@ -234,53 +234,6 @@ CMBlur::MotionBlurRender(RwCamera *cam, uint32 red, uint32 green, uint32 blue, u
 #endif
 }
 
-#ifdef __PS3__
-#include "ps3_platform.h"	// PS3_Logf
-// The sniper and rocket launcher views (and the trails) draw pFrontBuffer, the
-// last frame copied 1:1 into its top left, over the screen. The quad was made
-// once, at MotionBlurOpen, power of two sized with UVs 0..1: on the PS3 that
-// showed the picture shrunk in the middle of a black frame. Every draw now: the
-// quad over the camera, UVs over the part of pFrontBuffer the copy fills.
-// [mblur] logs the sizes (three times) to find out why they didn't match
-static void
-PS3_MBlurSetQuad(RwIm2DVertex *v, RwCamera *cam, float x0, float y0, float x1, float y1, float u, float vv)
-{
-	float rz = 1.0f/RwCameraGetNearClipPlane(cam);
-	float xs[4] = { x0, x0, x1, x1 }, ys[4] = { y0, y1, y1, y0 };
-	float us[4] = { 0.0f, 0.0f, u, u }, vs[4] = { 0.0f, vv, vv, 0.0f };
-	for(int i = 0; i < 4; i++){
-		RwIm2DVertexSetScreenX(&v[i], xs[i]);
-		RwIm2DVertexSetScreenY(&v[i], ys[i]);
-		RwIm2DVertexSetScreenZ(&v[i], RwIm2DGetNearScreenZ());
-		RwIm2DVertexSetCameraZ(&v[i], RwCameraGetNearClipPlane(cam));
-		RwIm2DVertexSetRecipCameraZ(&v[i], rz);
-		RwIm2DVertexSetU(&v[i], us[i], rz);
-		RwIm2DVertexSetV(&v[i], vs[i], rz);
-	}
-}
-
-static void
-PS3_MBlurFit(RwCamera *cam, RwRaster *raster, int32 type)
-{
-	RwRaster *cr = RwCameraGetRaster(cam);
-	float w = RwRasterGetWidth(cr), h = RwRasterGetHeight(cr);
-	float u = 1.0f, v = 1.0f;
-	if(raster && CMBlur::BlurOn && RwRasterGetWidth(raster) > 0 && RwRasterGetHeight(raster) > 0){
-		u = Min(w / RwRasterGetWidth(raster), 1.0f);
-		v = Min(h / RwRasterGetHeight(raster), 1.0f);
-	}
-	float zero = -HALFPX;
-	PS3_MBlurSetQuad(Vertex, cam, zero, zero, w - HALFPX, h - HALFPX, u, v);
-	static int logged;
-	if(type == MOTION_BLUR_SNIPER && logged < 3){
-		logged++;
-		PS3_Logf("[mblur] sniper view: camera raster %dx%d at %d,%d of %dx%d, front buffer %dx%d (blur %d), uv %.3f %.3f, near %.3f",
-		         cr->width, cr->height, cr->offsetX, cr->offsetY, cr->parent ? cr->parent->width : 0, cr->parent ? cr->parent->height : 0,
-		         raster ? raster->width : 0, raster ? raster->height : 0, CMBlur::BlurOn, u, v, RwCameraGetNearClipPlane(cam));
-	}
-}
-#endif
-
 void
 CMBlur::OverlayRender(RwCamera *cam, RwRaster *raster, RwRGBA color, int32 type, int32 bluralpha)
 {
@@ -292,9 +245,6 @@ CMBlur::OverlayRender(RwCamera *cam, RwRaster *raster, RwRGBA color, int32 type,
 	a = color.alpha;
 
 	DefinedState();
-#ifdef __PS3__
-	PS3_MBlurFit(cam, raster, type);
-#endif
 
 	switch(type)
 	{
