@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.5 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.6 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, and the game has been played to 100% on a real PS3. Expect
 > bugs anyway and please report them with the log (see
@@ -25,6 +25,24 @@ your own PC copy.
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
 PlayStation button icons and the controller picture of the settings page).
+
+## What's new in 1.6
+
+- **The rocket launcher's view over the whole screen**, as in San Andreas
+  (the black frame around it is gone; the sniper rifle keeps its scope).
+- **The PC intro movies** (`movies/Logo.mpg` and `movies/GTAtitles.mpg`)
+  at start up, for testing: only with an empty `USRDIR/videointrotest.txt`.
+  X, O or Start skips them.
+
+From Gamer100Dev's [reVC-PS3-Optimised](https://github.com/Gamer100Dev/reVC-PS3-Optimised):
+
+- Shadows filtered right, the headlights on the ground without the
+  rectangle around the beam, the ped shadow never wraps to black at the edge
+  of its range, the car lights fade smoothly, the long corona streaks
+  without their square.
+- RSX safety: the waits for the RSX keep waiting instead of reusing memory
+  still in use, a full vertex ring starts over instead of dropping draws,
+  and damaged textures are refused.
 
 ## What's new in 1.5
 
@@ -212,6 +230,9 @@ or platforms don't work.
   `USRDIR/spuparticles_ram.txt` keeps them on the SPU but has it write to
   main memory (the PPU copies them for the RSX). Report which one changes
   it, with the log.
+- The intro movies: an empty `USRDIR/videointrotest.txt` plays them at
+  start up (they need the `movies` folder of the PC game); if they don't
+  show, send the log.
 - `USRDIR/autotest.txt` runs an automatic test while you watch (load a save
   outdoors first). One line in it chooses the test: nothing (weather, a
   flight over the islands, save/load, side missions, garages), `mode=full`
@@ -262,6 +283,10 @@ and PSL1GHT's `cgcomp` with `cgcomp-relative-constants.patch`; see
   [librw](https://github.com/aap/librw).
 - The [ps3dev](https://github.com/ps3dev) people for ps3toolchain and PSL1GHT.
 - lieff for [minimp3](https://github.com/lieff/minimp3).
+- phoboslab for [pl_mpeg](https://github.com/phoboslab/pl_mpeg) (the intro
+  movies).
+- Gamer100Dev for the fixes of
+  [reVC-PS3-Optimised](https://github.com/Gamer100Dev/reVC-PS3-Optimised).
 
 The original re3 README is kept as [README.re3.md](README.re3.md).
 
