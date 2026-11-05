@@ -65,10 +65,13 @@ sys_mutex_t movieMutex;
 bool movieMutexReady;
 bool workerStarted;
 volatile uint32 workerQuit;
+volatile uint32 workerDone;	// the decoder thread has left its loop
+uint32 renderCalls;
 uint32 movieGeneration;
 uint32 finishedGeneration;
 uint32 clockGeneration;
 uint64 movieClockStartUS;
+double movieClockBase;	// the first frame's time: a movie whose times don't start at 0 plays at once
 char requestPath[512];
 volatile uint32 decodedCallbackCount;
 volatile uint32 decodedVideoCount;
@@ -300,8 +303,14 @@ decodedVideo(plm_t *decoder, plm_frame_t *frame, void *user)
 	   frame->cr.width > MOVIE_MAX_WIDTH/2 || frame->cr.height > MOVIE_MAX_HEIGHT/2 ||
 	   frame->y.width < frame->width || frame->y.height < frame->height ||
 	   frame->cr.width < (frame->width+1)/2 || frame->cr.height < (frame->height+1)/2 ||
-	   frame->cb.width != frame->cr.width || frame->cb.height != frame->cr.height)
+	   frame->cb.width != frame->cr.width || frame->cb.height != frame->cr.height){
+		static int told;
+		if(frame && told++ < 3)
+			PS3_Logf("[movie] frame refused: %ux%u (buffers %ux%u, chroma %ux%u); at most %ux%u",
+			         frame->width, frame->height, frame->y.width, frame->y.height, frame->cr.width, frame->cr.height,
+			         MOVIE_MAX_WIDTH, MOVIE_MAX_HEIGHT);
 		return;
+	}
 	sysMutexLock(movieMutex, 0);
 	if(generation != movieGeneration || frames == nil){
 		sysMutexUnlock(movieMutex);
@@ -327,12 +336,15 @@ decodedVideo(plm_t *decoder, plm_frame_t *frame, void *user)
 	dst.cWidth = frame->cr.width; dst.cHeight = frame->cr.height;
 	dst.time = frame->time;
 	dst.serial = ++nextFrameSerial;
+	if(dst.serial == 1)
+		PS3_Logf("[movie] first frame: %ux%u (buffers %ux%u, chroma %ux%u), at %.2f s", dst.width, dst.height, dst.yWidth, dst.yHeight, dst.cWidth, dst.cHeight, dst.time);
 	memcpy(dst.y, frame->y.data, (size_t)dst.yWidth * dst.yHeight);
 	memcpy(dst.cr, frame->cr.data, (size_t)dst.cWidth * dst.cHeight);
 	memcpy(dst.cb, frame->cb.data, (size_t)dst.cWidth * dst.cHeight);
 	if(clockGeneration != generation){
 		clockGeneration = generation;
 		movieClockStartUS = nowUS();
+		movieClockBase = dst.time;
 	}
 	frameQueue[queueHead] = slot;
 	queueHead = (queueHead + 1) % MOVIE_SLOT_COUNT;
@@ -430,6 +442,7 @@ movieWorker(void *arg)
 		if(callbacksAfter == callbacksBefore) sysUsleep(1000);
 	}
 	if(decoder) plm_destroy(decoder);
+	__sync_lock_test_and_set(&workerDone, 1);
 	sysThreadExit(0);
 }
 
@@ -520,6 +533,7 @@ PS3_MovieStart(const char *path)
 	}
 	if(!workerStarted){
 		workerQuit = 0;
+		workerDone = 0;
 		if(sysThreadCreate(&movieThreadId, movieWorker, nil, 1200, 512*1024, THREAD_JOINABLE,
 		                   (char*)"movie") != 0)
 			return 0;
@@ -562,7 +576,7 @@ PS3_MovieRenderFrame(void)
 	sysMutexLock(movieMutex, 0);
 	uint32 generation = movieGeneration;
 	double elapsed = clockGeneration == generation && movieClockStartUS ?
-	                 (double)(nowUS() - movieClockStartUS) / 1000000.0 : 0.0;
+	                 (double)(nowUS() - movieClockStartUS) / 1000000.0 + movieClockBase : 0.0;
 	int selected = -1;
 	while(queueCount){
 		int candidate = frameQueue[queueTail];
@@ -581,6 +595,9 @@ PS3_MovieRenderFrame(void)
 	MovieFrame *frame = currentFrame >= 0 ? &frames[currentFrame] : nil;
 	bool needsUpload = frame && frame->serial != uploadedFrameSerial;
 	RwCamera *savedCamera = Scene.camera;
+	if(++renderCalls % 120 == 1)
+		PS3_Logf("[movie] %.1f s: %u frames decoded, %u callbacks, %u queued, showing %d, sound %u in the ring",
+		         elapsed, decodedVideoCount, decodedCallbackCount, queueCount, currentFrame, audioHead - audioTail);
 	sysMutexUnlock(movieMutex);
 	// the slot stays "used" until another is selected: the decoder doesn't
 	// reuse it during the conversion
@@ -634,12 +651,14 @@ PS3_MovieFinished(void)
 	bool done = finishedGeneration == movieGeneration;
 	bool pending = queueCount != 0;
 	if(done && !pending && currentFrame >= 0 && movieClockStartUS && frames){
-		double elapsed = (double)(nowUS() - movieClockStartUS) / 1000000.0;
+		double elapsed = (double)(nowUS() - movieClockStartUS) / 1000000.0 + movieClockBase;
 		done = elapsed > frames[currentFrame].time + 0.05;
 	}
 	// no new frame for 5 s: the start up goes on
-	if(!done && watchProgressUS && nowUS() - watchProgressUS > 5000000ULL)
+	if(!done && watchProgressUS && nowUS() - watchProgressUS > 5000000ULL){
+		PS3_Logf("[movie] no new frame for 5 s (%u decoded): movie skipped", callbacks);
 		done = true;
+	}
 	sysMutexUnlock(movieMutex);
 	return done ? 1 : 0;
 }
@@ -672,6 +691,17 @@ PS3_MovieShutdown(void)
 		sysMutexLock(movieMutex, 0);
 		workerQuit = 1;
 		sysMutexUnlock(movieMutex);
+		// a decoder stuck in a damaged file mustn't keep the game here: 2 s,
+		// then it's left alone (and the frames with it)
+		for(int i = 0; i < 200 && !__sync_fetch_and_add(&workerDone, 0); i++)
+			sysUsleep(10000);
+		if(!__sync_fetch_and_add(&workerDone, 0)){
+			PS3_Log("[movie] WARNING: the decoder thread didn't stop (stuck in plm_decode?): left running");
+			audioClosePort();
+			if(movieCamera){ CameraDestroy(movieCamera); movieCamera = nil; }
+			movieSprite.Delete();
+			return;
+		}
 		u64 result;
 		sysThreadJoin(movieThreadId, &result);
 		workerStarted = false;
