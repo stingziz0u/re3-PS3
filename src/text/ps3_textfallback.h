@@ -21,6 +21,7 @@ static const struct { const char *key; const char *text; } ps3TextFallback[] = {
 	{ "FEG_TF6", "ANISOTROPIC 16X" },	// re3-PS3's own
 	{ "FEG_AAL", "ANTIALIASING" },	// re3-PS3's own
 	{ "FEG_AAF", "FXAA" },	// re3-PS3's own
+	{ "FEC_PRS", "PRESSURE SENSITIVE" },	// re3-PS3's own (from reLCS-PS3)
 	{ "FEC_AIM", "AIMING" },	// re3-PS3's own
 	{ "FEC_AI3", "III" },	// re3-PS3's own
 	{ "FEC_AIV", "VICE CITY" },	// re3-PS3's own

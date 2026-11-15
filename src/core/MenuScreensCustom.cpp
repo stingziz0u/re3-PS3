@@ -35,6 +35,9 @@ extern int8 gbShowFps;
 // Graphics menu: MIPMAPS, TEXTURE FILTERING, ANTIALIASING (OFF / FXAA;
 // ps3.cpp hands them to the RSX renderer every frame)
 int8 gPS3Mipmaps, gPS3TexFilter, gPS3Antialias;
+// Controller settings > PRESSURE SENSITIVE (accelerator and brake; from
+// reLCS-PS3 patch 30): ini [Controller] PressureSensitive, on by default
+int8 gPS3PadPressure = 1;
 const char *texFilterNames[] = { "FEG_TF0", "FEG_TF1", "FEG_TF2", "FEG_TF3", "FEG_TF4", "FEG_TF5", "FEG_TF6" };
 const char *antialiasNames[] = { "FEM_OFF", "FEG_AAF" };
 // Gamepad settings: right stick sensitivity, third and first person (Cam.cpp)
@@ -552,6 +555,7 @@ CMenuScreenCustom aScreens[MENUPAGES] = {
 		FREE_CAM_TOGGLE
 		MENUACTION_CFO_SELECT, "FEC_AIM", { new CCFOSelect((int8*)&gPS3AimingVC, "Controller", "AimingVC", aimingStyles, 2, false) },
 		MENUACTION_CHANGEMENU,		"FEC_STK", { nil, SAVESLOT_NONE, MENUPAGE_STICK_SETTINGS },
+		MENUACTION_CFO_SELECT, "FEC_PRS", { new CCFOSelect((int8*)&gPS3PadPressure, "Controller", "PressureSensitive", off_on, 2, false) },
 #endif
 		MENUACTION_CTRLVIBRATION,	"FEC_VIB", { nil, SAVESLOT_NONE, MENUPAGE_CONTROLLER_SETTINGS },
 		SELECT_CONTROLLER_TYPE
