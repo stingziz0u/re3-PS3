@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.6 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.6.1 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, and the game has been played to 100% on a real PS3. Expect
 > bugs anyway and please report them with the log (see
@@ -25,6 +25,11 @@ your own PC copy.
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
 PlayStation button icons and the controller picture of the settings page).
+
+## What's new in 1.6.1
+
+- **Controller settings > PRESSURE SENSITIVE**: turns the pressure-sensitive
+  Cross and Square (accelerate and brake) on or off, as in reLCS-PS3.
 
 ## What's new in 1.6
 
