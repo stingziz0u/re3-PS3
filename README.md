@@ -154,7 +154,7 @@ original):
 
 ## Installation
 
-1. Install `re3-ps3-1.5-alpha.pkg` on a PS3 with homebrew support (CFW or
+1. Install `re3-ps3-1.6.1-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **re3**.
 2. The PKG creates `/dev_hdd0/game/RE3PS3000/USRDIR` with these empty
