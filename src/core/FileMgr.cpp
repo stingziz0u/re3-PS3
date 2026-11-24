@@ -257,6 +257,28 @@ CFileMgr::LoadFile(const char *file, uint8 *buf, int maxlen, const char *mode)
 	if(fd == 0)
 		return -1;
 	len = 0;
+#ifdef __PS3__
+	// PS3: never past maxlen (the original reads 0x4000 at a time and only
+	// asserts after writing past the buffer: a russian.gxt bigger than the
+	// text buffer wrecked the heap). A file that doesn't fit is cut and logged.
+	for(;;){
+		int want = maxlen - 1 - len;
+		if(want > 0x4000)
+			want = 0x4000;
+		if(want <= 0){
+			char c;
+			if(myfread(&c, 1, 1, fd) == 1)
+				printf("CFileMgr::LoadFile: %s is bigger than %d bytes, cut\n", file, maxlen);
+			break;
+		}
+		n = myfread(buf + len, 1, want, fd);
+		if(n <= 0)
+			break;
+		len += n;
+		if(n < want)
+			break;
+	}
+#else
 	do{
 		n = myfread(buf + len, 1, 0x4000, fd);
 #ifndef FIX_BUGS
@@ -266,6 +288,7 @@ CFileMgr::LoadFile(const char *file, uint8 *buf, int maxlen, const char *mode)
 		len += n;
 		assert(len < maxlen);
 	}while(n == 0x4000);
+#endif
 	buf[len] = 0;
 	myfclose(fd);
 	return len;

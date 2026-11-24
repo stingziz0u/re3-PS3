@@ -98,7 +98,14 @@ CText::Load(void)
 	size_t sectlen;
 
 	Unload();
-	filedata = new uint8[0x40000];
+#ifdef __PS3__
+	// PS3: room for the translations' .gxt files (a russian.gxt doesn't fit
+	// in the original 256 KB). Only while loading.
+	const int gxtMax = 0x100000;
+#else
+	const int gxtMax = 0x40000;
+#endif
+	filedata = new uint8[gxtMax];
 
 	CFileMgr::SetDir("TEXT");
 #ifdef __PS3__
@@ -134,7 +141,7 @@ CText::Load(void)
 	}
 #endif
 
-	length = CFileMgr::LoadFile(filename, filedata, 0x40000, "rb");
+	length = CFileMgr::LoadFile(filename, filedata, gxtMax, "rb");
 	CFileMgr::SetDir("");
 
 	offset = 0;
@@ -146,6 +153,12 @@ CText::Load(void)
 		sectlen = (int)filedata[offset+3]<<24 | (int)filedata[offset+2]<<16 |
 			(int)filedata[offset+1]<<8 | (int)filedata[offset+0];
 		offset += 4;
+#ifdef __PS3__
+		if(offset + (ssize_t)sectlen > length){
+			printf("CText: %s: section %.4s goes past the end of the file\n", filename, type);
+			break;
+		}
+#endif
 		if(sectlen != 0){
 			if(strncmp(type, "TKEY", 4) == 0)
 				keyArray.Load(sectlen, filedata, &offset);
