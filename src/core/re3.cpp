@@ -88,6 +88,7 @@ mysrand(unsigned int seed)
 
 #ifdef CUSTOM_FRONTEND_OPTIONS
 #include "frontendoption.h"
+#include "Text.h"
 
 #ifdef MORE_LANGUAGES
 void LangPolSelect(int8 action)
@@ -118,6 +119,18 @@ void LangJapSelect(int8 action)
 		FrontEndMenuManager.InitialiseChangedLanguageSettings();
 		FrontEndMenuManager.SaveSettings();
 	}
+}
+#endif
+
+#if defined MORE_LANGUAGES && defined __PS3__
+static bool
+FileThereRe3(const char *name)
+{
+	int f = CFileMgr::OpenFile(name, "rb");
+	if (f <= 0)
+		return false;
+	CFileMgr::CloseFile(f);
+	return true;
 }
 #endif
 
@@ -152,6 +165,25 @@ CustomFrontendOptionsPopulate(void)
 
 	// Add outsourced language translations, if files are found
 #ifdef MORE_LANGUAGES
+#ifdef __PS3__
+	// PS3: by the .gxt alone (CText::PS3HasLanguage): Polish and Russian go to
+	// FONTS.TXD when FONTS_P/R.TXD aren't there; Japanese needs FONTS_J.TXD
+	(void)fd;
+	FrontendOptionSetCursor(MENUPAGE_LANGUAGE_SETTINGS, 5, false);
+	if (CText::PS3HasLanguage(CMenuManager::LANGUAGE_POLISH))
+		FrontendOptionAddDynamic("FEL_POL", nil, nil, LangPolSelect, nil, nil);
+	if (CText::PS3HasLanguage(CMenuManager::LANGUAGE_RUSSIAN))
+		FrontendOptionAddDynamic("FEL_RUS", nil, nil, LangRusSelect, nil, nil);
+	if (CText::PS3HasLanguage(CMenuManager::LANGUAGE_JAPANESE))
+		FrontendOptionAddDynamic("FEL_JAP", nil, nil, LangJapSelect, nil, nil);
+	else {
+		CFileMgr::SetDir("TEXT");
+		bool gxt = FileThereRe3("JAPANESE.GXT") || FileThereRe3("JAPAN.GXT");
+		CFileMgr::SetDir("");
+		if (gxt)
+			printf("[lang] TEXT\\JAPANESE.GXT without MODELS\\FONTS_J.TXD: Japanese not offered\n");
+	}
+#else
 	int fd2;
 	FrontendOptionSetCursor(MENUPAGE_LANGUAGE_SETTINGS, 5, false);
 	if (fd = CFileMgr::OpenFile("text/polish.gxt","r")) {
@@ -177,6 +209,7 @@ CustomFrontendOptionsPopulate(void)
 		}
 		CFileMgr::CloseFile(fd);
 	}
+#endif
 #endif
 
 }

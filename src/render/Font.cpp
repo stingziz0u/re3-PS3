@@ -401,9 +401,36 @@ CFont::LoadButtons(const char* txdPath)
 #endif // BUTTON_ICONS
 
 #ifdef MORE_LANGUAGES
+#ifdef __PS3__
+// PS3: Polish and Russian without their MODELS\FONTS_P.TXD / FONTS_R.TXD use
+// FONTS.TXD and its widths (translations that replace that file); Japanese
+// is only offered with FONTS_J.TXD (Text.cpp), the check is just in case
+static uint8
+PS3FontSetThere(uint8 set)
+{
+	const char *txd;
+	switch (set) {
+	case FONT_LANGSET_POLISH: txd = "MODELS/FONTS_P.TXD"; break;
+	case FONT_LANGSET_RUSSIAN: txd = "MODELS/FONTS_R.TXD"; break;
+	case FONT_LANGSET_JAPANESE: txd = "MODELS/FONTS_J.TXD"; break;
+	default: return set;
+	}
+	int f = CFileMgr::OpenFile(txd, "rb");
+	if (f > 0) {
+		CFileMgr::CloseFile(f);
+		return set;
+	}
+	printf("CFont: no %s, using MODELS/FONTS.TXD\n", txd);
+	return FONT_LANGSET_EFIGS;
+}
+#endif
+
 void
 CFont::ReloadFonts(uint8 set)
 {
+#ifdef __PS3__
+	set = PS3FontSetThere(set);
+#endif
 	if (Slot != -1 && LanguageSet != set) {
 		Sprite[0].Delete();
 		Sprite[1].Delete();

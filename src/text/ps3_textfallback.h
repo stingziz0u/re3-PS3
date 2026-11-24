@@ -2,6 +2,9 @@
 // american.gxt the user copies doesn't have them ("FET_AGS missing" in the
 // menu); CText::Get falls back to these (generated from re3's gamefiles).
 static const struct { const char *key; const char *text; } ps3TextFallback[] = {
+	{ "FEL_POL", "POLISH" },	// re3-PS3: the extra languages (re3.cpp)
+	{ "FEL_RUS", "RUSSIAN" },
+	{ "FEL_JAP", "JAPANESE" },
 	{ "FEG_FPS", "SHOW FPS" },	// re3-PS3's own
 	{ "FED_PSF", "SCREEN SIZE" },	// re3-PS3's own
 	{ "FED_MHP", "HIDDEN PACKAGES ON MAP" },	// re3-PS3's own

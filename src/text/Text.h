@@ -57,6 +57,9 @@ class CText
 public:
 	CText(void);
 	void Load(void);
+#ifdef __PS3__
+	static bool PS3HasLanguage(int32 lang);
+#endif
 	void Unload(void);
 	wchar *Get(const char *key);
 	wchar GetUpperCase(wchar c);

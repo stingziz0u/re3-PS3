@@ -207,6 +207,16 @@ the pack. The largest texture size is 4096×4096. Code mods (CLEO, ASI,
 plugins that patch the executable) and unconverted assets from other games
 or platforms don't work.
 
+### Languages
+
+Polish, Russian and Japanese appear in **Options → Language** when their
+text is in `text`: `polish.gxt`, `russian.gxt`, `japanese.gxt` (or
+`japan.gxt`). Their fonts go in `models`: `fonts_p.txd` and `fonts_r.txd`
+(without them the game's `fonts.txd` is used, for translations that replace
+that file) and `fonts_j.txd`, which Japanese can't go without (the log says
+so when only the `.gxt` is there). If the saved language's file is gone, the
+game goes back to English.
+
 ## Troubleshooting
 
 - **The log is off by default** (nothing is written to the disk while you

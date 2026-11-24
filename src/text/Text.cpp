@@ -15,6 +15,74 @@ wchar WideErrorString[25];
 
 CText TheText;
 
+#ifdef __PS3__
+// PS3: the .gxt of each language (TEXT\JAPAN.GXT too, the name some packs
+// use). Polish and Russian use MODELS\FONTS_P.TXD / FONTS_R.TXD when they're
+// there and FONTS.TXD if not (Font.cpp); Japanese can't go without
+// FONTS_J.TXD (its letters are a texture of their own). When the language
+// isn't usable (a saved Polish whose polish.gxt is gone, no french.gxt...)
+// the game goes back to American: an empty text table leaves the menus blank.
+static bool
+FileThere(const char *name)	// relative to CFileMgr's dir
+{
+	int f = CFileMgr::OpenFile(name, "rb");
+	if (f <= 0)
+		return false;
+	CFileMgr::CloseFile(f);
+	return true;
+}
+
+static const char *
+GxtFileName(int32 lang)	// CFileMgr's dir is TEXT; nil if the language can't be used
+{
+	const char *name;
+	switch (lang) {
+	case CMenuManager::LANGUAGE_FRENCH: name = "FRENCH.GXT"; break;
+	case CMenuManager::LANGUAGE_GERMAN: name = "GERMAN.GXT"; break;
+	case CMenuManager::LANGUAGE_ITALIAN: name = "ITALIAN.GXT"; break;
+	case CMenuManager::LANGUAGE_SPANISH: name = "SPANISH.GXT"; break;
+#ifdef MORE_LANGUAGES
+	case CMenuManager::LANGUAGE_POLISH: name = "POLISH.GXT"; break;
+	case CMenuManager::LANGUAGE_RUSSIAN: name = "RUSSIAN.GXT"; break;
+	case CMenuManager::LANGUAGE_JAPANESE: {
+		CFileMgr::SetDir("");
+		bool fonts = FileThere("MODELS/FONTS_J.TXD");
+		CFileMgr::SetDir("TEXT");
+		if (!fonts)
+			return nil;
+		name = FileThere("JAPANESE.GXT") ? "JAPANESE.GXT" : "JAPAN.GXT";
+		break;
+	}
+#endif
+	default: name = "AMERICAN.GXT"; break;
+	}
+	return FileThere(name) ? name : nil;
+}
+
+bool
+CText::PS3HasLanguage(int32 lang)
+{
+	CFileMgr::SetDir("TEXT");
+	bool found = GxtFileName(lang) != nil;
+	CFileMgr::SetDir("");
+	return found;
+}
+
+static void
+PS3PickGxt(char *filename)	// CFileMgr's dir is TEXT
+{
+	const char *name = GxtFileName(CMenuManager::m_PrefsLanguage);
+	if (name == nil) {
+		if (CMenuManager::m_PrefsLanguage != CMenuManager::LANGUAGE_AMERICAN)
+			printf("CText: language %d can't be used (no .gxt in TEXT\\, or no MODELS\\FONTS_J.TXD), using AMERICAN.GXT\n",
+				(int)CMenuManager::m_PrefsLanguage);
+		CMenuManager::m_PrefsLanguage = CMenuManager::LANGUAGE_AMERICAN;
+		name = "AMERICAN.GXT";
+	}
+	strcpy(filename, name);
+}
+#endif
+
 CText::CText(void)
 {
 	encoding = 'e';
@@ -33,6 +101,9 @@ CText::Load(void)
 	filedata = new uint8[0x40000];
 
 	CFileMgr::SetDir("TEXT");
+#ifdef __PS3__
+	PS3PickGxt(filename);
+#else
 	switch(CMenuManager::m_PrefsLanguage){
 	case CMenuManager::LANGUAGE_AMERICAN:
 		sprintf(filename, "AMERICAN.GXT");
@@ -61,6 +132,7 @@ CText::Load(void)
 		break;
 #endif
 	}
+#endif
 
 	length = CFileMgr::LoadFile(filename, filedata, 0x40000, "rb");
 	CFileMgr::SetDir("");
