@@ -9,7 +9,7 @@ natively on the PS3, with a hardware renderer on the RSX (a PS3 backend for
 librw), DualShock 3 controls in the PS2 style, and the game's data read from
 your own PC copy.
 
-> **Status: 1.6.1 alpha.** All of the game's missions, the odd jobs and the
+> **Status: 1.6.2 alpha.** All of the game's missions, the odd jobs and the
 > collectibles have been run through the automatic test on real hardware
 > without crashes, and the game has been played to 100% on a real PS3. Expect
 > bugs anyway and please report them with the log (see
@@ -18,6 +18,9 @@ your own PC copy.
 >
 >
 > **Known issues:**
+> - **Polish, Russian and Japanese** (new in 1.6.2) haven't been tried with a
+>   real GTA III translation yet: each one needs the translation's `.gxt` and
+>   its font. See [Languages](#languages) to try one.
 > - The pause menu stopped taking input once, on the way to loading a game
 >   (still drawn, the game running). The log now records every menu page
 >   and why a menu takes no input; if it happens to you, please send it.
@@ -25,6 +28,14 @@ your own PC copy.
 **No game data is included.** You need a legally purchased copy of GTA III
 for PC. The PKG only has the program, its icon and two re3 files (the
 PlayStation button icons and the controller picture of the settings page).
+
+## What's new in 1.6.2
+
+- **Polish, Russian and Japanese** in Options → Language when their `.gxt`
+  is in `text` (see [Languages](#languages); not tried with a real
+  translation yet).
+- A text file bigger than the game expects (a `russian.gxt`) no longer
+  sends the game back to the XMB.
 
 ## What's new in 1.6.1
 
@@ -154,7 +165,7 @@ original):
 
 ## Installation
 
-1. Install `re3-ps3-1.6.1-alpha.pkg` on a PS3 with homebrew support (CFW or
+1. Install `re3-ps3-1.6.2-alpha.pkg` on a PS3 with homebrew support (CFW or
    HEN), e.g. copy it by FTP and install it with the package manager. It
    appears in the XMB as **re3**.
 2. The PKG creates `/dev_hdd0/game/RE3PS3000/USRDIR` with these empty
@@ -209,13 +220,21 @@ or platforms don't work.
 
 ### Languages
 
-Polish, Russian and Japanese appear in **Options → Language** when their
-text is in `text`: `polish.gxt`, `russian.gxt`, `japanese.gxt` (or
-`japan.gxt`). Their fonts go in `models`: `fonts_p.txd` and `fonts_r.txd`
-(without them the game's `fonts.txd` is used, for translations that replace
-that file) and `fonts_j.txd`, which Japanese can't go without (the log says
-so when only the `.gxt` is there). If the saved language's file is gone, the
-game goes back to English.
+Polish, Russian and Japanese can be added (since 1.6.2), but they haven't
+been tried with a real translation yet (see the known issues). To try one:
+
+1. Copy the translation's text to `text`: `polish.gxt`, `russian.gxt` or
+   `japanese.gxt` (`japan.gxt` works too). It must be GTA III's: a Vice
+   City or LCS `.gxt` isn't offered (the log says so).
+2. Copy the translation's font to `models`, renamed `fonts_p.txd` (Polish),
+   `fonts_r.txd` (Russian) or `fonts_j.txd` (Japanese). Translations draw
+   their letters in their own font: without it the game's `fonts.txd` is
+   used and the text comes out in Latin letters (Russian looks like accented
+   Latin). Japanese isn't offered without `fonts_j.txd`.
+3. Choose it in **Options → Language**.
+
+If the saved language's file is gone, the game goes back to English. If a
+translation looks wrong, please send the log and its files.
 
 ## Troubleshooting
 
